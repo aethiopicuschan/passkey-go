@@ -1,0 +1,179 @@
+<!doctype html>
+<html>
+    <head>
+        <meta charset="UTF-8" />
+        <title>Passkey Demo</title>
+    </head>
+    <body>
+        <h1>Passkey Demo</h1>
+
+        <label>
+            User ID:
+            <input
+                type="text"
+                id="userID"
+                placeholder="unique-user-id"
+                oninput="updateButtons()"
+            />
+        </label>
+        <br />
+        <label>
+            Name:
+            <input type="text" id="name" placeholder="user@example.com" />
+        </label>
+        <br />
+        <label>
+            Display Name:
+            <input type="text" id="displayName" placeholder="Test User" />
+        </label>
+        <br />
+
+        <button id="registerBtn" onclick="register()" disabled>Register</button>
+        <button id="loginBtn" onclick="login()" disabled>Login</button>
+
+        <div id="output" style="margin-top: 1em; font-family: monospace"></div>
+
+        <script>
+            function base64urlEncode(buf) {
+                const bin = String.fromCharCode(...buf);
+                return btoa(bin)
+                    .replace(/\+/g, "-")
+                    .replace(/\//g, "_")
+                    .replace(/=+$/, "");
+            }
+
+            function base64urlDecode(str) {
+                str = str.replace(/-/g, "+").replace(/_/g, "/");
+                while (str.length % 4 !== 0) str += "=";
+                return Uint8Array.from(atob(str), (c) => c.charCodeAt(0));
+            }
+
+            function getUserID() {
+                return (
+                    document.getElementById("userID").value.trim() || "user-id"
+                );
+            }
+
+            function setOutput(text) {
+                document.getElementById("output").textContent = text;
+            }
+
+            function updateButtons() {
+                const userID = document.getElementById("userID").value.trim();
+                const isDisabled = userID === "";
+                document.getElementById("registerBtn").disabled = isDisabled;
+                document.getElementById("loginBtn").disabled = isDisabled;
+            }
+
+            window.addEventListener("DOMContentLoaded", updateButtons);
+
+            async function getChallenge(userID) {
+                const res = await fetch(
+                    "/challenge?user_id=" + encodeURIComponent(userID),
+                );
+                const { challenge } = await res.json();
+                return base64urlDecode(challenge);
+            }
+
+            async function register() {
+                const userID = getUserID();
+                const name =
+                    document.getElementById("name").value || "user@example.com";
+                const displayName =
+                    document.getElementById("displayName").value || "Test User";
+                const challenge = await getChallenge(userID);
+
+                const options = {
+                    publicKey: {
+                        challenge: challenge.buffer,
+                        rp: { name: "Passkey Demo", id: "localhost" },
+                        user: {
+                            id: Uint8Array.from(userID, (c) => c.charCodeAt(0)),
+                            name: name,
+                            displayName: displayName,
+                        },
+                        pubKeyCredParams: [{ type: "public-key", alg: -7 }],
+                        authenticatorSelection: {
+                            userVerification: "preferred",
+                        },
+                        timeout: 60000,
+                        attestation: "none",
+                    },
+                };
+
+                try {
+                    const cred = await navigator.credentials.create(options);
+                    const attObj = new Uint8Array(
+                        cred.response.attestationObject,
+                    );
+
+                    const payload = {
+                        attestation: base64urlEncode(attObj),
+                        user_id: userID,
+                    };
+
+                    const res = await fetch("/register/finish", {
+                        method: "POST",
+                        headers: { "Content-Type": "application/json" },
+                        body: JSON.stringify(payload),
+                    });
+                    const text = await res.text();
+                    setOutput("Register result: " + text);
+                } catch (err) {
+                    setOutput("Register error: " + err.message);
+                }
+            }
+
+            async function login() {
+                const userID = getUserID();
+                const challenge = await getChallenge(userID);
+
+                const options = {
+                    publicKey: {
+                        challenge: challenge.buffer,
+                        allowCredentials: [],
+                        timeout: 60000,
+                        userVerification: "preferred",
+                    },
+                };
+
+                try {
+                    const assertion = await navigator.credentials.get(options);
+                    const authData = new Uint8Array(
+                        assertion.response.authenticatorData,
+                    );
+                    const clientDataJSON = new Uint8Array(
+                        assertion.response.clientDataJSON,
+                    );
+                    const signature = new Uint8Array(
+                        assertion.response.signature,
+                    );
+                    const rawId = new Uint8Array(assertion.rawId);
+
+                    const payload = {
+                        id: assertion.id,
+                        rawId: base64urlEncode(rawId),
+                        type: assertion.type,
+                        user_id: userID,
+                        response: {
+                            authenticatorData: base64urlEncode(authData),
+                            clientDataJSON: base64urlEncode(clientDataJSON),
+                            signature: base64urlEncode(signature),
+                            userHandle: null,
+                        },
+                    };
+
+                    const res = await fetch("/login/finish", {
+                        method: "POST",
+                        headers: { "Content-Type": "application/json" },
+                        body: JSON.stringify(payload),
+                    });
+                    const text = await res.text();
+                    setOutput("Login result: " + text);
+                } catch (err) {
+                    setOutput("Login error: " + err.message);
+                }
+            }
+        </script>
+    </body>
+</html>
