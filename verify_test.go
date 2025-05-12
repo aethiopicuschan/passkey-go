@@ -81,7 +81,6 @@ func TestVerifyAssertionSignature(t *testing.T) {
 	}
 
 	for _, tt := range tests {
-		tt := tt // capture
 		t.Run(tt.name, func(t *testing.T) {
 			t.Parallel()
 
