@@ -17,8 +17,8 @@ func (e *PasskeyError) Is(target error) bool {
 	return ok && e.Code == t.Code
 }
 
-func (e *PasskeyError) ToJSON() map[string]interface{} {
-	return map[string]interface{}{
+func (e *PasskeyError) ToJSON() map[string]any {
+	return map[string]any{
 		"error":  e.Message,
 		"code":   e.Code,
 		"field":  e.Field,

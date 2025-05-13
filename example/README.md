@@ -17,4 +17,4 @@ go run .
 ```
 
 Then, open your browser and navigate to [http://localhost:8080](http://localhost:8080).
-You'll see a simple UI with buttons to register and log in using a passkey.
+You'll see a simple UI with buttons to register and login using a passkey.
