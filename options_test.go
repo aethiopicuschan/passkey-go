@@ -45,22 +45,22 @@ func TestCreateOptions(t *testing.T) {
 				assert.NoError(t, err)
 				assert.NotNil(t, result)
 
-				var parsed map[string]interface{}
+				var parsed map[string]any
 				err := json.Unmarshal(result, &parsed)
 				assert.NoError(t, err)
 
 				assert.Equal(t, tt.challenge, parsed["challenge"])
-				assert.Equal(t, tt.rpID, parsed["rp"].(map[string]interface{})["id"])
-				assert.Equal(t, tt.rpName, parsed["rp"].(map[string]interface{})["name"])
-				assert.Equal(t, tt.userID, parsed["user"].(map[string]interface{})["id"])
-				assert.Equal(t, tt.userName, parsed["user"].(map[string]interface{})["name"])
-				assert.Equal(t, tt.displayName, parsed["user"].(map[string]interface{})["displayName"])
+				assert.Equal(t, tt.rpID, parsed["rp"].(map[string]any)["id"])
+				assert.Equal(t, tt.rpName, parsed["rp"].(map[string]any)["name"])
+				assert.Equal(t, tt.userID, parsed["user"].(map[string]any)["id"])
+				assert.Equal(t, tt.userName, parsed["user"].(map[string]any)["name"])
+				assert.Equal(t, tt.displayName, parsed["user"].(map[string]any)["displayName"])
 				assert.Equal(t, "none", parsed["attestation"])
 
-				authSel := parsed["authenticatorSelection"].(map[string]interface{})
+				authSel := parsed["authenticatorSelection"].(map[string]any)
 				assert.Equal(t, "preferred", authSel["userVerification"])
 
-				params := parsed["pubKeyCredParams"].([]interface{})
+				params := parsed["pubKeyCredParams"].([]any)
 				assert.Len(t, params, 2)
 			}
 		})

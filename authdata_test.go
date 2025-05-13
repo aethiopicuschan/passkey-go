@@ -11,7 +11,7 @@ import (
 )
 
 func TestParseAuthData(t *testing.T) {
-	makeAuthData := func(withAttested bool, pubKey map[interface{}]interface{}) []byte {
+	makeAuthData := func(withAttested bool, pubKey map[any]any) []byte {
 		var buf bytes.Buffer
 
 		// 32 bytes RPID hash (dummy)
@@ -50,7 +50,7 @@ func TestParseAuthData(t *testing.T) {
 		return buf.Bytes()
 	}
 
-	validCOSEKey := map[interface{}]interface{}{
+	validCOSEKey := map[any]any{
 		int64(1):  2,
 		int64(3):  -7,
 		int64(-1): []byte{0x20, 0x01},
@@ -106,7 +106,7 @@ func TestParseAuthData(t *testing.T) {
 		{
 			name: "invalid COSE key index type",
 			input: func() []byte {
-				pubKey := map[interface{}]interface{}{
+				pubKey := map[any]any{
 					"string-key": "value", // invalid key type
 				}
 				return makeAuthData(true, pubKey)
@@ -117,7 +117,7 @@ func TestParseAuthData(t *testing.T) {
 		{
 			name: "COSE key index too large",
 			input: func() []byte {
-				pubKey := map[interface{}]interface{}{
+				pubKey := map[any]any{
 					uint64(^uint(0)): 42, // max uint64, overflow int
 				}
 				return makeAuthData(true, pubKey)

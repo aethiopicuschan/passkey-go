@@ -17,7 +17,7 @@ func TestGenerateChallenge(t *testing.T) {
 
 	decoded, err := base64.RawURLEncoding.DecodeString(ch)
 	assert.NoError(t, err)
-	assert.Len(t, decoded, 32) // 確実に32バイト
+	assert.Len(t, decoded, 32)
 }
 
 func TestCheckChallenge(t *testing.T) {
