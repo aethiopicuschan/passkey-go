@@ -1,6 +1,7 @@
 package passkey
 
 import (
+	"encoding/base64"
 	"encoding/json"
 	"errors"
 )
@@ -24,7 +25,7 @@ type RelyingPartyEntity struct {
 
 // UserEntity describes the user who is registering the credential.
 type UserEntity struct {
-	ID          string `json:"id"`          // User identifier, base64url encoded.
+	ID          string `json:"id"`          // User identifier (must be base64url-encoded binary ID).
 	Name        string `json:"name"`        // User handle, typically the username.
 	DisplayName string `json:"displayName"` // User's display name.
 }
@@ -37,31 +38,67 @@ type PublicKeyCredentialParameters struct {
 
 // AuthenticatorSelection specifies authenticator requirements for registration.
 type AuthenticatorSelection struct {
-	UserVerification string `json:"userVerification"`      // Requirement level for user verification ("required", "preferred", or "discouraged").
-	ResidentKey      string `json:"residentKey,omitempty"` // Optional: whether a resident key is required ("required", "preferred", or omitted).
+	UserVerification string `json:"userVerification"`      // Requirement level for user verification ("required", "preferred", "discouraged").
+	ResidentKey      string `json:"residentKey,omitempty"` // Optional: whether a resident key is required.
 }
 
-// CreateOptions constructs and serializes the credential creation options into JSON.
+// CreateOptionsParams allows flexible creation of credential creation options.
+type CreateOptionsParams struct {
+	RPID             string
+	RPName           string
+	UserID           []byte // raw user ID (will be base64url-encoded internally)
+	UserName         string
+	DisplayName      string
+	Challenge        string
+	Attestation      string // "none", "direct", etc.
+	UserVerification string // "preferred", etc.
+	ResidentKey      string // optional
+	TimeoutMs        int    // optional
+}
+
+// CreateOptionsWithParams constructs and serializes the credential creation options into JSON.
 // These options are then sent to the client browser for initiating passkey registration.
-func CreateOptions(rpID, rpName, userID, userName, displayName, challenge string) ([]byte, error) {
+func CreateOptionsWithParams(p CreateOptionsParams) ([]byte, error) {
+	userIDEncoded := base64.RawURLEncoding.EncodeToString(p.UserID)
+
 	opts := PublicKeyCredentialCreationOptions{
-		Challenge: challenge,
-		RP:        RelyingPartyEntity{Name: rpName, ID: rpID},
-		User:      UserEntity{ID: userID, Name: userName, DisplayName: displayName},
-		PubKeyCredParams: []PublicKeyCredentialParameters{
-			{Type: "public-key", Alg: -7},   // ES256 algorithm
-			{Type: "public-key", Alg: -257}, // RS256 algorithm
+		Challenge: p.Challenge,
+		RP:        RelyingPartyEntity{Name: p.RPName, ID: p.RPID},
+		User: UserEntity{
+			ID:          userIDEncoded,
+			Name:        p.UserName,
+			DisplayName: p.DisplayName,
 		},
-		Attestation: "none", // No attestation is required
+		PubKeyCredParams: []PublicKeyCredentialParameters{
+			{Type: "public-key", Alg: -7},   // ES256
+			{Type: "public-key", Alg: -257}, // RS256
+		},
+		Attestation: p.Attestation,
+		Timeout:     p.TimeoutMs,
 		AuthenticatorSelection: AuthenticatorSelection{
-			UserVerification: "preferred", // User verification is preferred but not required
+			UserVerification: p.UserVerification,
+			ResidentKey:      p.ResidentKey,
 		},
 	}
 
-	// Serialize the credential creation options to JSON
 	b, err := json.Marshal(opts)
 	if err != nil {
-		return nil, errors.Join(ErrCreateOptionsMarshal, err) // Combine and return serialization errors
+		return nil, errors.Join(ErrCreateOptionsMarshal, err)
 	}
 	return b, nil
+}
+
+// CreateOptions is a simplified wrapper for legacy usage.
+// Use CreateOptionsWithParams for more control.
+func CreateOptions(rpID, rpName, userID, userName, displayName, challenge string) ([]byte, error) {
+	return CreateOptionsWithParams(CreateOptionsParams{
+		RPID:             rpID,
+		RPName:           rpName,
+		UserID:           []byte(userID),
+		UserName:         userName,
+		DisplayName:      displayName,
+		Challenge:        challenge,
+		Attestation:      "none",
+		UserVerification: "preferred",
+	})
 }

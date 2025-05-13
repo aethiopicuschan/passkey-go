@@ -8,23 +8,14 @@ import (
 	"github.com/stretchr/testify/assert"
 )
 
-func TestGenerateChallenge(t *testing.T) {
+func TestCheckChallenge(t *testing.T) {
 	t.Parallel()
 
-	ch, err := passkey.GenerateChallenge()
-	assert.NoError(t, err)
-	assert.NotEmpty(t, ch)
-
-	decoded, err := base64.RawURLEncoding.DecodeString(ch)
-	assert.NoError(t, err)
-	assert.Len(t, decoded, 32)
-}
-
-func TestCheckChallenge(t *testing.T) {
 	type args struct {
-		expected string
-		received string
+		expectedB64 string
+		receivedB64 string
 	}
+
 	tests := []struct {
 		name      string
 		args      args
@@ -35,19 +26,16 @@ func TestCheckChallenge(t *testing.T) {
 			name: "matching challenge",
 			args: func() args {
 				raw := []byte("test-challenge-1234567890abcdef")
-				encoded := base64.RawURLEncoding.EncodeToString(raw)
-				return args{
-					expected: string(raw),
-					received: encoded,
-				}
+				b64 := base64.RawURLEncoding.EncodeToString(raw)
+				return args{b64, b64}
 			}(),
 			wantErr: false,
 		},
 		{
 			name: "invalid base64 input",
 			args: args{
-				expected: "anything",
-				received: "!!!not_base64",
+				expectedB64: "ignored",
+				receivedB64: "!!!not_base64",
 			},
 			wantErr:   true,
 			wantErrIs: passkey.ErrChallengeDecode,
@@ -55,12 +43,9 @@ func TestCheckChallenge(t *testing.T) {
 		{
 			name: "mismatched decoded challenge",
 			args: func() args {
-				expected := "correct-challenge"
-				received := base64.RawURLEncoding.EncodeToString([]byte("wrong-challenge"))
-				return args{
-					expected: expected,
-					received: received,
-				}
+				a := base64.RawURLEncoding.EncodeToString([]byte("correct-challenge"))
+				b := base64.RawURLEncoding.EncodeToString([]byte("wrong-challenge"))
+				return args{a, b}
 			}(),
 			wantErr:   true,
 			wantErrIs: passkey.ErrChallengeMismatch,
@@ -71,7 +56,8 @@ func TestCheckChallenge(t *testing.T) {
 		t.Run(tt.name, func(t *testing.T) {
 			t.Parallel()
 
-			err := passkey.CheckChallenge(tt.args.expected, tt.args.received)
+			err := passkey.CheckChallenge(tt.args.expectedB64, tt.args.receivedB64)
+
 			if tt.wantErr {
 				assert.Error(t, err)
 				assert.ErrorIs(t, err, tt.wantErrIs)

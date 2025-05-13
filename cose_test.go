@@ -11,6 +11,7 @@ import (
 	"github.com/aethiopicuschan/passkey-go"
 )
 
+// IsOnCurveP256 returns true if (x, y) is a valid point on the NIST P-256 curve using crypto/ecdh
 func IsOnCurveP256(x, y *big.Int) bool {
 	curve := ecdh.P256()
 

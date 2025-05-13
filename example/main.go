@@ -13,8 +13,8 @@ import (
 	"github.com/aethiopicuschan/passkey-go"
 )
 
-// memoryStore is an in-memory database for storing credentials.
-// It maps credential IDs to public keys and sign counters.
+// memoryStore is an in-memory credential store.
+// It maps credential IDs to public keys and their latest signCount values.
 type memoryStore struct {
 	mu sync.Mutex
 	db map[string]struct {
@@ -23,15 +23,16 @@ type memoryStore struct {
 	}
 }
 
-// newMemoryStore creates and returns a new memoryStore instance.
 func newMemoryStore() *memoryStore {
-	return &memoryStore{db: make(map[string]struct {
-		Key       *passkey.PublicKeyRecord
-		SignCount uint32
-	})}
+	return &memoryStore{
+		db: make(map[string]struct {
+			Key       *passkey.PublicKeyRecord
+			SignCount uint32
+		}),
+	}
 }
 
-// StoreCredential stores the credential data in memory for a given user.
+// StoreCredential saves a public key and signCount for a given credential.
 func (m *memoryStore) StoreCredential(userID, credID string, pubKey *passkey.PublicKeyRecord, signCount uint32) error {
 	m.mu.Lock()
 	defer m.mu.Unlock()
@@ -42,7 +43,7 @@ func (m *memoryStore) StoreCredential(userID, credID string, pubKey *passkey.Pub
 	return nil
 }
 
-// LookupCredential retrieves the stored public key and sign count for a given credential ID.
+// LookupCredential retrieves a public key and signCount using the credential ID.
 func (m *memoryStore) LookupCredential(credID string) (*passkey.PublicKeyRecord, uint32, error) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
@@ -53,7 +54,7 @@ func (m *memoryStore) LookupCredential(credID string) (*passkey.PublicKeyRecord,
 	return rec.Key, rec.SignCount, nil
 }
 
-// UpdateSignCount updates the sign counter for a given credential ID.
+// UpdateSignCount overwrites the signCount for an existing credential.
 func (m *memoryStore) UpdateSignCount(credID string, newCount uint32) error {
 	m.mu.Lock()
 	defer m.mu.Unlock()
@@ -65,45 +66,45 @@ func (m *memoryStore) UpdateSignCount(credID string, newCount uint32) error {
 
 var store = newMemoryStore()
 
-// challengeStore holds ongoing challenges for each user to verify login/register requests.
+// challengeStore holds the issued challenge for each userID (during register/login flow).
 var challengeStore = struct {
 	mu  sync.Mutex
-	val map[string]string // map[userID]challenge
+	val map[string]string // map[userID] => challenge
 }{val: make(map[string]string)}
 
-// handleRegisterFinish handles the final step of registration.
-// It parses the attestation object, extracts the public key, and stores it with sign count.
+// handleRegisterFinish receives the attestation response from the client,
+// extracts and stores the credential public key and signCount.
 func handleRegisterFinish(w http.ResponseWriter, r *http.Request) {
 	body, _ := io.ReadAll(r.Body)
 	type Req struct {
-		Attestation string `json:"attestation"`
-		UserID      string `json:"user_id"`
+		Attestation string `json:"attestation"` // base64url-encoded attestation object
+		UserID      string `json:"user_id"`     // arbitrary user ID
 	}
 	var req Req
 	json.Unmarshal(body, &req)
 
-	// Parse the attestation object.
+	// Decode and parse attestationObject
 	att, err := passkey.ParseAttestationObject(req.Attestation)
 	if err != nil {
 		handlePasskeyError(w, err)
 		return
 	}
 
-	// Parse authenticator data from attestation.
+	// Extract raw authenticator data (authData)
 	auth, err := passkey.ParseAuthData(att.AuthData)
 	if err != nil {
 		handlePasskeyError(w, err)
 		return
 	}
 
-	// Convert COSE public key format to ECDSA.
+	// Convert COSE-encoded public key into Go's ECDSA format
 	pubKey, err := passkey.ConvertCOSEKeyToECDSA(auth.PublicKey)
 	if err != nil {
 		handlePasskeyError(w, err)
 		return
 	}
 
-	// Store the credential information.
+	// Store the credential in memory
 	record := &passkey.PublicKeyRecord{Key: pubKey}
 	credID := base64.RawURLEncoding.EncodeToString(auth.CredID)
 	store.StoreCredential(req.UserID, credID, record, auth.SignCount)
@@ -111,70 +112,50 @@ func handleRegisterFinish(w http.ResponseWriter, r *http.Request) {
 	w.Write([]byte("registration OK"))
 }
 
-// handleLoginFinish handles the final step of login.
-// It verifies the assertion signature and updates the sign counter.
+// handleLoginFinish verifies the client's assertion and completes login.
 func handleLoginFinish(w http.ResponseWriter, r *http.Request) {
 	body, _ := io.ReadAll(r.Body)
 
 	var parsed struct {
-		RawID  string `json:"rawId"`
-		UserID string `json:"user_id"`
+		RawID  string `json:"rawId"`   // base64url-encoded credential ID
+		UserID string `json:"user_id"` // user identifier
 	}
 	if err := json.Unmarshal(body, &parsed); err != nil {
 		http.Error(w, "invalid json", http.StatusBadRequest)
 		return
 	}
 
-	// Lookup stored credential by ID.
+	// Retrieve stored public key and signCount by credential ID
 	pubKey, signCount, err := store.LookupCredential(parsed.RawID)
 	if err != nil {
 		http.Error(w, err.Error(), http.StatusBadRequest)
 		return
 	}
 
-	// Parse the assertion object from request body.
-	authData, clientData, sig, err := passkey.ParseAssertion(body)
-	if err != nil {
-		handlePasskeyError(w, err)
-		return
-	}
-
-	// Parse client data JSON.
-	clientParsed, err := passkey.ParseClientDataJSON(clientData)
-	if err != nil {
-		handlePasskeyError(w, err)
-		return
-	}
-
-	// Check that the challenge matches the one stored for this user.
+	// Retrieve the previously issued challenge for this user
 	challengeStore.mu.Lock()
-	expected := challengeStore.val[parsed.UserID]
+	expectedChallenge := challengeStore.val[parsed.UserID]
 	challengeStore.mu.Unlock()
-	if expected != clientParsed.Challenge {
-		http.Error(w, "challenge mismatch", http.StatusBadRequest)
-		return
-	}
 
-	// Verify the assertion signature using the stored public key.
-	if err := passkey.VerifyAssertionSignature(authData, clientData, sig, pubKey.Key); err != nil {
-		handlePasskeyError(w, err)
-		return
-	}
-
-	// Parse auth data and verify sign count.
-	authParsed, err := passkey.ParseAuthData(authData)
+	// Perform high-level passkey assertion verification
+	// Includes signature check, origin/rp/challenge matching, and signCount replay protection
+	newCount, err := passkey.VerifyAssertion(
+		body,
+		"http://localhost:8080", // expected origin
+		"localhost",             // expected relying party ID
+		expectedChallenge,       // previously issued challenge
+		signCount,               // stored signCount
+		pubKey.Key,              // public key
+	)
 	if err != nil {
 		handlePasskeyError(w, err)
 		return
 	}
-	if err := passkey.CheckSignCount(signCount, authParsed.SignCount); err != nil {
-		handlePasskeyError(w, err)
-		return
-	}
 
-	// Update stored sign count after successful login.
-	store.UpdateSignCount(parsed.RawID, authParsed.SignCount)
+	// Update stored signCount if verification succeeded
+	store.UpdateSignCount(parsed.RawID, newCount)
 
+	// Respond with successful login message
 	w.Header().Set("Content-Type", "application/json")
 	json.NewEncoder(w).Encode(map[string]string{
 		"message": "login OK",
@@ -182,8 +163,7 @@ func handleLoginFinish(w http.ResponseWriter, r *http.Request) {
 	})
 }
 
-// handleChallenge generates a challenge and stores it per user.
-// This challenge is later verified during login/register.
+// handleChallenge issues a new challenge and stores it for the given user.
 func handleChallenge(w http.ResponseWriter, r *http.Request) {
 	userID := r.URL.Query().Get("user_id")
 	if userID == "" {
@@ -191,13 +171,14 @@ func handleChallenge(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	// Generate secure random challenge
 	chal, err := passkey.GenerateChallenge()
 	if err != nil {
 		handlePasskeyError(w, err)
 		return
 	}
 
-	// Store challenge for this user.
+	// Store challenge associated with this user
 	challengeStore.mu.Lock()
 	challengeStore.val[userID] = chal
 	challengeStore.mu.Unlock()
@@ -208,7 +189,7 @@ func handleChallenge(w http.ResponseWriter, r *http.Request) {
 	})
 }
 
-// handlePasskeyError returns a proper HTTP response for a PasskeyError or logs unexpected ones.
+// handlePasskeyError inspects and logs structured PasskeyError responses.
 func handlePasskeyError(w http.ResponseWriter, err error) {
 	var perr *passkey.PasskeyError
 	if errors.As(err, &perr) {
@@ -219,12 +200,12 @@ func handlePasskeyError(w http.ResponseWriter, err error) {
 	}
 }
 
-// main sets up the HTTP server and routes for the passkey example.
+// main launches the example HTTP server on :8080
 func main() {
-	http.Handle("/", http.FileServer(http.Dir("./public")))
-	http.HandleFunc("/challenge", handleChallenge)
-	http.HandleFunc("/register/finish", handleRegisterFinish)
-	http.HandleFunc("/login/finish", handleLoginFinish)
+	http.Handle("/", http.FileServer(http.Dir("./public")))   // Serve static frontend
+	http.HandleFunc("/challenge", handleChallenge)            // Issue challenge
+	http.HandleFunc("/register/finish", handleRegisterFinish) // Handle attestation
+	http.HandleFunc("/login/finish", handleLoginFinish)       // Handle assertion
 
 	log.Println("Example passkey server running on :8080")
 	http.ListenAndServe(":8080", nil)

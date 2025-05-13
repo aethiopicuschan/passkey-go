@@ -11,35 +11,31 @@ import (
 )
 
 func TestParseAuthData(t *testing.T) {
-	makeAuthData := func(withAttested bool, pubKey map[any]any) []byte {
+	makeAuthData := func(withAttested bool, credID []byte, pubKey map[any]any) []byte {
 		var buf bytes.Buffer
 
-		// 32 bytes RPID hash (dummy)
+		// RPID hash (32 bytes)
 		buf.Write(bytes.Repeat([]byte{0x01}, 32))
 
 		// Flags
 		flags := byte(0x00)
 		if withAttested {
-			flags |= 0x40 // attested credential flag
+			flags |= 0x40
 		}
 		buf.WriteByte(flags)
 
-		// Signature counter (4 bytes)
+		// Sign count
 		buf.Write([]byte{0x00, 0x00, 0x00, 0x05})
 
 		if withAttested {
-			// AAGUID (16 bytes dummy)
+			// AAGUID
 			buf.Write(bytes.Repeat([]byte{0x02}, 16))
 
-			// Credential ID length (2 bytes)
-			credID := []byte{0x03, 0x04, 0x05}
-			credIDLen := uint16(len(credID))
-			_ = binary.Write(&buf, binary.BigEndian, credIDLen)
-
-			// Credential ID
+			// Credential ID length
+			_ = binary.Write(&buf, binary.BigEndian, uint16(len(credID)))
 			buf.Write(credID)
 
-			// Public Key (COSE Key)
+			// COSE public key
 			cborPubKey, err := cbor.Marshal(pubKey)
 			if err != nil {
 				panic(err)
@@ -49,6 +45,8 @@ func TestParseAuthData(t *testing.T) {
 
 		return buf.Bytes()
 	}
+
+	validCredID := []byte{0x03, 0x04, 0x05}
 
 	validCOSEKey := map[any]any{
 		int64(1):  2,
@@ -64,9 +62,8 @@ func TestParseAuthData(t *testing.T) {
 		check     func(t *testing.T, p *passkey.ParsedAuthData)
 	}{
 		{
-			name:    "valid authData without attestation",
-			input:   makeAuthData(false, nil),
-			wantErr: false,
+			name:  "valid authData without attestation",
+			input: makeAuthData(false, nil, nil),
 			check: func(t *testing.T, p *passkey.ParsedAuthData) {
 				assert.Equal(t, byte(0x00), p.Flags)
 				assert.Equal(t, uint32(5), p.SignCount)
@@ -75,22 +72,18 @@ func TestParseAuthData(t *testing.T) {
 			},
 		},
 		{
-			name:    "valid authData with attestation",
-			input:   makeAuthData(true, validCOSEKey),
-			wantErr: false,
+			name:  "valid authData with attestation",
+			input: makeAuthData(true, validCredID, validCOSEKey),
 			check: func(t *testing.T, p *passkey.ParsedAuthData) {
 				assert.Equal(t, byte(0x40), p.Flags)
 				assert.Equal(t, uint32(5), p.SignCount)
-				assert.Equal(t, []byte{0x03, 0x04, 0x05}, p.CredID)
-				assert.NotNil(t, p.PublicKey)
+				assert.Equal(t, validCredID, p.CredID)
 
-				// COSE key 1: should be uint64(2)
 				v, ok := p.PublicKey[1]
 				assert.True(t, ok)
 				assert.IsType(t, uint64(0), v)
 				assert.Equal(t, uint64(2), v)
 
-				// COSE key 3: should be int64(-7)
 				v3, ok := p.PublicKey[3]
 				assert.True(t, ok)
 				assert.IsType(t, int64(0), v3)
@@ -105,22 +98,37 @@ func TestParseAuthData(t *testing.T) {
 		},
 		{
 			name: "invalid COSE key index type",
-			input: func() []byte {
-				pubKey := map[any]any{
-					"string-key": "value", // invalid key type
-				}
-				return makeAuthData(true, pubKey)
-			}(),
+			input: makeAuthData(true, validCredID, map[any]any{
+				"invalid-key": 123,
+			}),
 			wantErr:   true,
 			wantErrIs: passkey.ErrAuthDataInvalid,
 		},
 		{
 			name: "COSE key index too large",
+			input: makeAuthData(true, validCredID, map[any]any{
+				uint64(^uint(0)): 123, // extremely large uint64
+			}),
+			wantErr:   true,
+			wantErrIs: passkey.ErrAuthDataInvalid,
+		},
+		{
+			name:      "credential ID too long",
+			input:     makeAuthData(true, bytes.Repeat([]byte{0xAA}, 2000), validCOSEKey),
+			wantErr:   true,
+			wantErrIs: passkey.ErrAuthDataInvalid,
+		},
+		{
+			name: "credential ID length > buf.Len()",
 			input: func() []byte {
-				pubKey := map[any]any{
-					uint64(^uint(0)): 42, // max uint64, overflow int
-				}
-				return makeAuthData(true, pubKey)
+				var buf bytes.Buffer
+				buf.Write(bytes.Repeat([]byte{0x01}, 32))        // RPID hash
+				buf.WriteByte(0x40)                              // flags
+				buf.Write([]byte{0x00, 0x00, 0x00, 0x01})        // signCount
+				buf.Write(bytes.Repeat([]byte{0x02}, 16))        // AAGUID
+				binary.Write(&buf, binary.BigEndian, uint16(10)) // credIDLen = 10
+				buf.Write([]byte{0xAA})                          // only 1 byte → underflow
+				return buf.Bytes()
 			}(),
 			wantErr:   true,
 			wantErrIs: passkey.ErrAuthDataInvalid,
@@ -132,6 +140,7 @@ func TestParseAuthData(t *testing.T) {
 			t.Parallel()
 
 			p, err := passkey.ParseAuthData(tt.input)
+
 			if tt.wantErr {
 				assert.Error(t, err)
 				assert.ErrorIs(t, err, tt.wantErrIs)

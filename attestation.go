@@ -14,21 +14,31 @@ type AttestationObject struct {
 	AttestationStatement map[string]any `cbor:"attStmt"`  // AttestationStatement includes the attestation statement specific to the format.
 }
 
-// ParseAttestationObject decodes a base64-encoded CBOR attestation object string.
-// Returns a structured AttestationObject or an error if decoding or parsing fails.
+// ParseAttestationObject decodes a base64url-encoded CBOR attestation object string
+// and performs minimal structural validation.
 func ParseAttestationObject(attestationB64 string) (*AttestationObject, error) {
-	// Decode attestation object from base64 URL encoding.
+	// Decode from base64url
 	raw, err := base64.RawURLEncoding.DecodeString(attestationB64)
 	if err != nil {
 		return nil, errors.Join(ErrInvalidAttestationFormat, err)
 	}
 
-	// Unmarshal CBOR data into the AttestationObject struct.
+	// Decode CBOR
 	var obj AttestationObject
 	if err := cbor.Unmarshal(raw, &obj); err != nil {
 		return nil, errors.Join(ErrInvalidAttestationFormat, err)
 	}
 
-	// Successfully parsed AttestationObject returned.
+	// Validate required fields
+	if obj.Format == "" {
+		return nil, errors.Join(ErrInvalidAttestationFormat, errors.New("missing format"))
+	}
+	if len(obj.AuthData) == 0 {
+		return nil, errors.Join(ErrInvalidAttestationFormat, errors.New("missing authData"))
+	}
+	if obj.AttestationStatement == nil {
+		return nil, errors.Join(ErrInvalidAttestationFormat, errors.New("missing attStmt"))
+	}
+
 	return &obj, nil
 }

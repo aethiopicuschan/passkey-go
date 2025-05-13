@@ -8,23 +8,31 @@ import (
 
 // GenerateChallenge creates a secure random challenge string, encoded in URL-safe Base64.
 func GenerateChallenge() (string, error) {
-	buf := make([]byte, 32) // Allocate 32 bytes for the challenge.
+	buf := make([]byte, 32) // 32-byte challenge
 	if _, err := rand.Read(buf); err != nil {
-		return "", errors.Join(ErrChallengeGen, err) // Return an error if random byte generation fails.
+		return "", errors.Join(ErrChallengeGen, err)
 	}
-	return base64.RawURLEncoding.EncodeToString(buf), nil // Return the encoded challenge.
+	return base64.RawURLEncoding.EncodeToString(buf), nil
 }
 
-// CheckChallenge verifies that the received Base64-encoded challenge matches the expected challenge.
-func CheckChallenge(expected, receivedB64 string) error {
-	// Decode the received challenge from Base64.
+// CheckChallenge compares two base64url-encoded challenge strings for exact match.
+// If decoding fails or the decoded values do not match, an error is returned.
+func CheckChallenge(expectedB64, receivedB64 string) error {
+	expectedDecoded, err := base64.RawURLEncoding.DecodeString(expectedB64)
+	if err != nil {
+		return errors.Join(ErrChallengeDecode, err)
+	}
 	receivedDecoded, err := base64.RawURLEncoding.DecodeString(receivedB64)
 	if err != nil {
-		return errors.Join(ErrChallengeDecode, err) // Return an error if decoding fails.
+		return errors.Join(ErrChallengeDecode, err)
 	}
-	// Check if the decoded received challenge matches the expected challenge.
-	if expected != string(receivedDecoded) {
-		return ErrChallengeMismatch // Return an error if there's a mismatch.
+	if len(expectedDecoded) != len(receivedDecoded) {
+		return ErrChallengeMismatch
 	}
-	return nil // No error means challenges match.
+	for i := range expectedDecoded {
+		if expectedDecoded[i] != receivedDecoded[i] {
+			return ErrChallengeMismatch
+		}
+	}
+	return nil
 }

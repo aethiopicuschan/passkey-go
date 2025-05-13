@@ -15,7 +15,7 @@ func TestParseAttestationObject(t *testing.T) {
 		Format:   "packed",
 		AuthData: []byte{0x01, 0x02, 0x03},
 		AttestationStatement: map[string]any{
-			"alg": -7,
+			"alg": int64(-7),
 			"sig": []byte{0x04, 0x05, 0x06},
 		},
 	}
@@ -23,6 +23,14 @@ func TestParseAttestationObject(t *testing.T) {
 	validCBOR, err := cbor.Marshal(validObj)
 	assert.NoError(t, err)
 	validEncoded := base64.RawURLEncoding.EncodeToString(validCBOR)
+
+	// Incomplete object (missing fields)
+	missingFieldsObj := map[string]any{
+		"fmt": "packed", // missing authData and attStmt
+	}
+	missingCBOR, err := cbor.Marshal(missingFieldsObj)
+	assert.NoError(t, err)
+	missingEncoded := base64.RawURLEncoding.EncodeToString(missingCBOR)
 
 	tests := []struct {
 		name        string
@@ -44,6 +52,12 @@ func TestParseAttestationObject(t *testing.T) {
 		{
 			name:        "valid base64 but invalid CBOR",
 			inputBase64: base64.RawURLEncoding.EncodeToString([]byte("not-cbor")),
+			wantErr:     true,
+			wantErrIs:   passkey.ErrInvalidAttestationFormat,
+		},
+		{
+			name:        "valid CBOR but missing required fields",
+			inputBase64: missingEncoded,
 			wantErr:     true,
 			wantErrIs:   passkey.ErrInvalidAttestationFormat,
 		},

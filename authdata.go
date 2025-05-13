@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"encoding/binary"
 	"errors"
+	"fmt"
 	"io"
 	"math"
 
@@ -50,6 +51,13 @@ func ParseAuthData(authData []byte) (*ParsedAuthData, error) {
 	var credIDLen uint16
 	if err := binary.Read(buf, binary.BigEndian, &credIDLen); err != nil {
 		return nil, errors.Join(ErrAuthDataInvalid, err)
+	}
+	// Limit maximum allowed length for Credential ID to prevent abuse
+	if credIDLen > 1024 {
+		return nil, errors.Join(ErrAuthDataInvalid, fmt.Errorf("credential ID too long: %d", credIDLen))
+	}
+	if int(credIDLen) > buf.Len() {
+		return nil, errors.Join(ErrAuthDataInvalid, fmt.Errorf("not enough bytes for credential ID"))
 	}
 
 	// Read the Credential ID based on the length.

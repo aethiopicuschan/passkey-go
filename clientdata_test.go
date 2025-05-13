@@ -11,7 +11,7 @@ import (
 func TestParseClientDataJSON(t *testing.T) {
 	valid := passkey.ClientData{
 		Type:      "webauthn.create",
-		Challenge: "base64url-challenge",
+		Challenge: "YmFzZTY0dXJsLWNoYWxsZW5nZQ", // base64url("base64url-challenge")
 		Origin:    "https://example.com",
 	}
 	validJSON, err := json.Marshal(valid)
@@ -32,19 +32,57 @@ func TestParseClientDataJSON(t *testing.T) {
 		},
 		{
 			name:      "invalid JSON syntax",
-			input:     []byte(`{"type":`), // broken
+			input:     []byte(`{"type":`),
 			wantErr:   true,
 			wantErrIs: passkey.ErrInvalidClientData,
 		},
 		{
-			name:    "empty JSON",
-			input:   []byte(`{}`),
-			wantErr: false,
-			want: &passkey.ClientData{
-				Type:      "",
-				Challenge: "",
-				Origin:    "",
-			},
+			name:      "empty JSON object",
+			input:     []byte(`{}`),
+			wantErr:   true,
+			wantErrIs: passkey.ErrInvalidClientData,
+		},
+		{
+			name: "invalid type field",
+			input: func() []byte {
+				c := passkey.ClientData{
+					Type:      "invalid-type",
+					Challenge: valid.Challenge,
+					Origin:    valid.Origin,
+				}
+				b, _ := json.Marshal(c)
+				return b
+			}(),
+			wantErr:   true,
+			wantErrIs: passkey.ErrInvalidClientData,
+		},
+		{
+			name: "invalid base64 challenge",
+			input: func() []byte {
+				c := passkey.ClientData{
+					Type:      "webauthn.get",
+					Challenge: "!!!invalid",
+					Origin:    valid.Origin,
+				}
+				b, _ := json.Marshal(c)
+				return b
+			}(),
+			wantErr:   true,
+			wantErrIs: passkey.ErrInvalidClientData,
+		},
+		{
+			name: "empty origin",
+			input: func() []byte {
+				c := passkey.ClientData{
+					Type:      "webauthn.get",
+					Challenge: valid.Challenge,
+					Origin:    "",
+				}
+				b, _ := json.Marshal(c)
+				return b
+			}(),
+			wantErr:   true,
+			wantErrIs: passkey.ErrInvalidClientData,
 		},
 	}
 
@@ -52,7 +90,7 @@ func TestParseClientDataJSON(t *testing.T) {
 		t.Run(tt.name, func(t *testing.T) {
 			t.Parallel()
 
-			got, err := passkey.ParseClientDataJSON(tt.input)
+			got, err := passkey.ParseClientDataJSON(tt.input, "https://example.com")
 
 			if tt.wantErr {
 				assert.Error(t, err)

@@ -16,7 +16,7 @@ func TestCheckSignCount(t *testing.T) {
 		wantErrIs error
 	}{
 		{
-			name:    "initial value both zero → no error",
+			name:    "signCount unsupported (both zero)",
 			old:     0,
 			new:     0,
 			wantErr: false,
@@ -28,7 +28,7 @@ func TestCheckSignCount(t *testing.T) {
 			wantErr: false,
 		},
 		{
-			name:      "replay attack (same value)",
+			name:      "replay attack (same signCount)",
 			old:       5,
 			new:       5,
 			wantErr:   true,
@@ -44,7 +44,6 @@ func TestCheckSignCount(t *testing.T) {
 	}
 
 	for _, tt := range tests {
-		tt := tt // capture loop variable
 		t.Run(tt.name, func(t *testing.T) {
 			t.Parallel()
 

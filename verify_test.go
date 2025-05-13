@@ -6,6 +6,7 @@ import (
 	"crypto/rand"
 	"crypto/sha256"
 	"encoding/asn1"
+	"math/big"
 	"testing"
 
 	"github.com/aethiopicuschan/passkey-go"
@@ -13,22 +14,32 @@ import (
 )
 
 func TestVerifyAssertionSignature(t *testing.T) {
-	// Generate test ECDSA key pair (P-256)
+	t.Parallel()
+
+	// Generate ECDSA key pair
 	privKey, err := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
 	assert.NoError(t, err)
 	pubKey := &privKey.PublicKey
 
 	authData := []byte("authenticator-data")
-	clientData := []byte(`{"type":"webauthn.get","challenge":"abc","origin":"https://example.com"}`)
+	clientDataJSON := []byte(`{"type":"webauthn.get","challenge":"abc","origin":"https://example.com"}`)
 
-	clientHash := sha256.Sum256(clientData)
+	clientHash := sha256.Sum256(clientDataJSON)
 	signed := append(authData, clientHash[:]...)
 	signedHash := sha256.Sum256(signed)
 
 	r, s, err := ecdsa.Sign(rand.Reader, privKey, signedHash[:])
 	assert.NoError(t, err)
 
-	sig, err := asn1.Marshal(passkey.EcdsaSignature{R: r, S: s})
+	// Canonicalize S (Low-S)
+	halfOrder := new(big.Int).Rsh(privKey.Params().N, 1)
+	if s.Cmp(halfOrder) == 1 {
+		s.Sub(privKey.Params().N, s)
+	}
+
+	sig, err := asn1.Marshal(struct {
+		R, S *big.Int
+	}{R: r, S: s})
 	assert.NoError(t, err)
 
 	tests := []struct {
@@ -43,7 +54,7 @@ func TestVerifyAssertionSignature(t *testing.T) {
 		{
 			name:     "valid signature",
 			authData: authData,
-			client:   clientData,
+			client:   clientDataJSON,
 			sig:      sig,
 			pub:      pubKey,
 			wantErr:  false,
@@ -51,8 +62,8 @@ func TestVerifyAssertionSignature(t *testing.T) {
 		{
 			name:      "invalid ASN.1 signature",
 			authData:  authData,
-			client:    clientData,
-			sig:       []byte{0x01, 0x02, 0x03}, // invalid
+			client:    clientDataJSON,
+			sig:       []byte{0x01, 0x02, 0x03},
 			pub:       pubKey,
 			wantErr:   true,
 			wantErrIs: passkey.ErrSignatureInvalid,
@@ -60,7 +71,7 @@ func TestVerifyAssertionSignature(t *testing.T) {
 		{
 			name:     "signature with wrong key",
 			authData: authData,
-			client:   clientData,
+			client:   clientDataJSON,
 			sig:      sig,
 			pub: func() *ecdsa.PublicKey {
 				k, _ := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
@@ -71,8 +82,8 @@ func TestVerifyAssertionSignature(t *testing.T) {
 		},
 		{
 			name:      "tampered authData",
-			authData:  []byte("tampered"),
-			client:    clientData,
+			authData:  []byte("tampered-auth-data"),
+			client:    clientDataJSON,
 			sig:       sig,
 			pub:       pubKey,
 			wantErr:   true,
