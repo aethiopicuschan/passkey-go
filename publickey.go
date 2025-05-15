@@ -14,8 +14,12 @@ type PublicKeyRecord struct {
 }
 
 // ParsePublicKey converts a byte slice containing an ASN.1 DER-encoded public key
-func MarshalPublicKey(pub *ecdsa.PublicKey) ([]byte, error) {
-	return x509.MarshalPKIXPublicKey(pub) // → ASN.1 DER []byte
+func MarshalPublicKey(pub *ecdsa.PublicKey) (b []byte, err error) {
+	b, err = x509.MarshalPKIXPublicKey(pub) // → ASN.1 DER []byte
+	if err != nil {
+		err = errors.Join(ErrPublicKeyMarshalFailed, err)
+	}
+	return
 }
 
 // ParsePublicKey converts a byte slice containing an ASN.1 DER-encoded public key
