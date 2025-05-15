@@ -27,7 +27,8 @@ func TestMarshalUnmarshalPublicKey(t *testing.T) {
 				if err != nil {
 					return nil, err
 				}
-				return passkey.MarshalPublicKey(&priv.PublicKey)
+				pkr := passkey.PublicKeyRecord{Key: &priv.PublicKey}
+				return passkey.MarshalPublicKey(pkr)
 			},
 			wantErr:    false,
 			expectCode: "",
