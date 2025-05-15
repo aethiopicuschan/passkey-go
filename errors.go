@@ -47,9 +47,10 @@ var (
 
 // --- Storage / Credential Errors ---
 var (
-	ErrCredentialNotFound    = &PasskeyError{"E3001", "credential not found", 404, "credentialID"}
-	ErrCredentialIDMalformed = &PasskeyError{"E3002", "credential ID malformed", 400, "credentialID"}
-	ErrNotECDSAPublicKey     = &PasskeyError{"E3003", "not an ECDSA public key", 400, "publicKey"}
+	ErrCredentialNotFound     = &PasskeyError{"E3001", "credential not found", 404, "credentialID"}
+	ErrCredentialIDMalformed  = &PasskeyError{"E3002", "credential ID malformed", 400, "credentialID"}
+	ErrNotECDSAPublicKey      = &PasskeyError{"E3003", "not an ECDSA public key", 400, "publicKey"}
+	ErrPublicKeyMarshalFailed = &PasskeyError{"E3004", "failed to marshal public key", 500, "publicKey"}
 )
 
 // --- Credential Creation Errors ---
