@@ -14,8 +14,6 @@ import (
 )
 
 func TestVerifyAssertionSignature(t *testing.T) {
-	t.Parallel()
-
 	// Generate ECDSA key pair
 	privKey, err := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
 	assert.NoError(t, err)

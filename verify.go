@@ -29,38 +29,31 @@ type ecdsaSignature struct {
 // - nil if the signature is valid.
 // - ErrSignatureInvalid if the signature is malformed or does not verify.
 func VerifyAssertionSignature(authData, clientDataJSON, signature []byte, pubKey *ecdsa.PublicKey) error {
-	// Validate the public key
 	if pubKey == nil || pubKey.X == nil || pubKey.Y == nil || pubKey.Params() == nil {
 		return errors.New("invalid public key")
 	}
 
-	// Compute the SHA-256 hash of the clientDataJSON
+	// Step 1: Hash the clientDataJSON with SHA-256
 	clientHash := sha256.Sum256(clientDataJSON)
 
-	// Concatenate authData and clientHash to form the message that was signed
+	// Step 2: Concatenate authData and clientHash, then hash again to get the signed message
 	signed := append(authData, clientHash[:]...)
-
-	// Hash the concatenated data to get the final digest to verify
 	signedHash := sha256.Sum256(signed)
 
-	// Parse the ASN.1 DER encoded ECDSA signature into R and S values
+	// Step 3: Parse the ASN.1 DER encoded ECDSA signature into R and S
 	var sig ecdsaSignature
 	rest, err := asn1.Unmarshal(signature, &sig)
 	if err != nil || len(rest) > 0 {
 		return errors.Join(ErrSignatureInvalid, fmt.Errorf("asn1 unmarshal failed or trailing bytes: %w", err))
 	}
 
-	// Optional: enforce low-S signature (to prevent malleability)
-	halfOrder := new(big.Int).Rsh(pubKey.Params().N, 1)
-	if sig.S.Cmp(halfOrder) > 0 {
-		return errors.New("signature uses high-S value (not canonical)")
-	}
+	// Step 4: Normalize S to a low-S value to prevent malleability issues
+	sig.S = ToLowS(sig.S, pubKey.Params().N)
 
-	// Verify the ECDSA signature using the public key and hashed message
+	// Step 5: Verify the ECDSA signature using the public key and the hashed message
 	if !ecdsa.Verify(pubKey, signedHash[:], sig.R, sig.S) {
 		return ErrSignatureInvalid
 	}
 
-	// Signature is valid
 	return nil
 }
