@@ -9,8 +9,6 @@ import (
 )
 
 func TestCheckChallenge(t *testing.T) {
-	t.Parallel()
-
 	type args struct {
 		expectedB64 string
 		receivedB64 string

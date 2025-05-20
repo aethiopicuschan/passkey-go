@@ -13,7 +13,6 @@ import (
 )
 
 func TestMarshalUnmarshalPublicKey(t *testing.T) {
-
 	tests := []struct {
 		name       string
 		setupKey   func() ([]byte, error) // prepares the input bytes

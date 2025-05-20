@@ -19,8 +19,6 @@ import (
 )
 
 func TestParseAssertion(t *testing.T) {
-	t.Parallel()
-
 	validAuthData := base64.RawURLEncoding.EncodeToString([]byte("auth-data"))
 	validClientData := base64.RawURLEncoding.EncodeToString([]byte("client-data"))
 	validSignature := base64.RawURLEncoding.EncodeToString([]byte("signature"))
