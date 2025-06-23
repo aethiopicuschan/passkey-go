@@ -1,212 +1,494 @@
 package main
 
 import (
+	"crypto/rand"
 	"encoding/base64"
 	"encoding/json"
 	"errors"
-	"fmt"
 	"io"
 	"log"
 	"net/http"
+	"slices"
 	"sync"
+	"time"
 
 	"github.com/aethiopicuschan/passkey-go"
+	"golang.org/x/crypto/bcrypt"
 )
 
-// memoryStore is an in-memory credential store.
-// It maps credential IDs to public keys and their latest signCount values.
-type memoryStore struct {
-	mu sync.Mutex
-	db map[string]struct {
-		Key       *passkey.PublicKeyRecord
-		SignCount uint32
+// User represents an individual user with basic profile and authentication information.
+type User struct {
+	ID           string
+	Email        string
+	Name         string
+	PasswordHash []byte // bcrypt-hashed password
+}
+
+// Users is a collection of User objects.
+type Users []User
+
+// GetByUserID returns a user matching the given user ID.
+func (u *Users) GetByUserID(userID string) *User {
+	for _, user := range *u {
+		if user.ID == userID {
+			return &user // Found user
+		}
+	}
+	return nil // Not found
+}
+
+// In-memory user store
+var userStore Users
+
+// Session represents an active user session, identified by a session key.
+type Session struct {
+	SessionKey string
+	UserID     string
+}
+
+// Sessions is a collection of Session objects.
+type Sessions []Session
+
+// GetBySessionKey looks up a session by its key.
+func (s *Sessions) GetBySessionKey(sessionKey string) *Session {
+	for _, session := range *s {
+		if session.SessionKey == sessionKey {
+			return &session // Found session
+		}
+	}
+	return nil // Not found
+}
+
+// DeleteBySessionKey removes a session from memory based on its key.
+func (s *Sessions) DeleteBySessionKey(sessionKey string) {
+	for i, session := range *s {
+		if session.SessionKey == sessionKey {
+			// Remove the session from the slice
+			*s = slices.Delete(*s, i, i+1)
+			return
+		}
 	}
 }
 
-func newMemoryStore() *memoryStore {
-	return &memoryStore{
-		db: make(map[string]struct {
-			Key       *passkey.PublicKeyRecord
-			SignCount uint32
-		}),
-	}
-}
+// In-memory session store
+var sessionStore Sessions
 
-// StoreCredential saves a public key and signCount for a given credential.
-func (m *memoryStore) StoreCredential(userID, credID string, pubKey *passkey.PublicKeyRecord, signCount uint32) error {
-	m.mu.Lock()
-	defer m.mu.Unlock()
-	m.db[credID] = struct {
-		Key       *passkey.PublicKeyRecord
-		SignCount uint32
-	}{Key: pubKey, SignCount: signCount}
-	return nil
-}
-
-// LookupCredential retrieves a public key and signCount using the credential ID.
-func (m *memoryStore) LookupCredential(credID string) (*passkey.PublicKeyRecord, uint32, error) {
-	m.mu.Lock()
-	defer m.mu.Unlock()
-	rec, ok := m.db[credID]
-	if !ok {
-		return nil, 0, fmt.Errorf("not found")
-	}
-	return rec.Key, rec.SignCount, nil
-}
-
-// UpdateSignCount overwrites the signCount for an existing credential.
-func (m *memoryStore) UpdateSignCount(credID string, newCount uint32) error {
-	m.mu.Lock()
-	defer m.mu.Unlock()
-	rec := m.db[credID]
-	rec.SignCount = newCount
-	m.db[credID] = rec
-	return nil
-}
-
-var store = newMemoryStore()
-
-// challengeStore holds the issued challenge for each userID (during register/login flow).
+// challengeStore holds temporary passkey challenges indexed by a unique key.
+// This map is protected by a mutex to handle concurrent access safely.
 var challengeStore = struct {
 	mu  sync.Mutex
-	val map[string]string // map[userID] => challenge
+	val map[string]string
 }{val: make(map[string]string)}
 
-// handleRegisterFinish receives the attestation response from the client,
-// extracts and stores the credential public key and signCount.
-func handleRegisterFinish(w http.ResponseWriter, r *http.Request) {
-	body, _ := io.ReadAll(r.Body)
-	type Req struct {
-		Attestation string `json:"attestation"` // base64url-encoded attestation object
-		UserID      string `json:"user_id"`     // arbitrary user ID
-	}
-	var req Req
-	json.Unmarshal(body, &req)
-
-	// Decode and parse attestationObject
-	att, err := passkey.ParseAttestationObject(req.Attestation)
-	if err != nil {
-		handlePasskeyError(w, err)
-		return
-	}
-
-	// Extract raw authenticator data (authData)
-	auth, err := passkey.ParseAuthData(att.AuthData)
-	if err != nil {
-		handlePasskeyError(w, err)
-		return
-	}
-
-	// Convert COSE-encoded public key into Go's ECDSA format
-	pubKey, err := passkey.ConvertCOSEKeyToECDSA(auth.PublicKey)
-	if err != nil {
-		handlePasskeyError(w, err)
-		return
-	}
-
-	// Store the credential in memory
-	record := &passkey.PublicKeyRecord{Key: pubKey}
-	credID := base64.RawURLEncoding.EncodeToString(auth.CredID)
-	store.StoreCredential(req.UserID, credID, record, auth.SignCount)
-
-	w.Write([]byte("registration OK"))
+// Passkey represents a registered WebAuthn credential tied to a user.
+type Passkey struct {
+	CredentialID string
+	UserID       string
+	PublicKey    []byte
+	SignCount    uint32
 }
 
-// handleLoginFinish verifies the client's assertion and completes login.
-func handleLoginFinish(w http.ResponseWriter, r *http.Request) {
-	body, _ := io.ReadAll(r.Body)
+// Passkeys is a collection of registered Passkeys.
+type Passkeys []Passkey
 
-	var parsed struct {
-		RawID  string `json:"rawId"`   // base64url-encoded credential ID
-		UserID string `json:"user_id"` // user identifier
+// In-memory passkey store
+var passkeyStore Passkeys
+
+// LookupCredential finds a passkey's public key and sign count based on its credential ID.
+func (p *Passkeys) LookupCredential(credID string) ([]byte, uint32, error) {
+	for _, passkey := range *p {
+		if passkey.CredentialID == credID {
+			return passkey.PublicKey, passkey.SignCount, nil // Return match
+		}
 	}
-	if err := json.Unmarshal(body, &parsed); err != nil {
-		http.Error(w, "invalid json", http.StatusBadRequest)
+	return nil, 0, errors.New("credential not found")
+}
+
+// UpdateSignCount updates the sign counter for a specific passkey.
+func (p *Passkeys) UpdateSignCount(credID string, newSignCount uint32) error {
+	for i, passkey := range *p {
+		if passkey.CredentialID == credID {
+			(*p)[i].SignCount = newSignCount // Overwrite old sign count
+			return nil
+		}
+	}
+	return errors.New("credential not found")
+}
+
+// GetUserID returns the user ID associated with a given credential ID.
+func (p *Passkeys) GetUserID(credID string) (string, error) {
+	for _, passkey := range *p {
+		if passkey.CredentialID == credID {
+			return passkey.UserID, nil
+		}
+	}
+	return "", errors.New("credential not found")
+}
+
+// init initializes the user store with two sample users and hashed passwords.
+func init() {
+	// Hash the password "password" using bcrypt
+	ph, _ := bcrypt.GenerateFromPassword([]byte("password"), bcrypt.DefaultCost)
+
+	// Create sample users "bob" and "alice" with the same password
+	userStore = Users{
+		{ID: "1", Email: "bob@example.com", Name: "bob", PasswordHash: ph},
+		{ID: "2", Email: "alice@example.com", Name: "alice", PasswordHash: ph},
+	}
+}
+
+// GenerateRandomKey creates a short random key using crypto/rand and fallback to non-secure fallback.
+func GenerateRandomKey() string {
+	return rand.Text() // NOT cryptographically secure; for demo only
+}
+
+// CreateSession creates a session for a given user ID and returns a Session and corresponding cookie.
+func CreateSession(userID string) (Session, *http.Cookie) {
+	// Generate a session key based on userID (insecure: should use UUID or crypto/rand in production)
+	sessionKey := "session_" + userID
+
+	// Construct a new session object
+	session := Session{
+		SessionKey: sessionKey,
+		UserID:     userID,
+	}
+
+	// Create a secure session cookie
+	cookie := &http.Cookie{
+		Name:     "session_key",
+		Value:    sessionKey,
+		Path:     "/",
+		Expires:  time.Now().Add(24 * time.Hour), // Valid for 24 hours
+		HttpOnly: true,                           // Prevent access via JavaScript
+		Secure:   true,                           // Ensure HTTPS-only
+		SameSite: http.SameSiteStrictMode,        // Prevent CSRF in cross-origin requests
+	}
+
+	return session, cookie
+}
+
+// LoginHandler processes email/password login and issues a session cookie.
+func LoginHandler(w http.ResponseWriter, r *http.Request) {
+	type LoginRequest struct {
+		Email    string `json:"email"`
+		Password string `json:"password"`
+	}
+
+	// Ensure the request method is POST
+	if r.Method != http.MethodPost {
+		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
 		return
 	}
 
-	// Retrieve stored public key and signCount by credential ID
-	pubKey, signCount, err := store.LookupCredential(parsed.RawID)
-	if err != nil {
-		http.Error(w, err.Error(), http.StatusBadRequest)
+	// Parse the request body as JSON into LoginRequest
+	var req LoginRequest
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		http.Error(w, "Invalid request body", http.StatusBadRequest)
 		return
 	}
 
-	// Retrieve the previously issued challenge for this user
-	challengeStore.mu.Lock()
-	expectedChallenge := challengeStore.val[parsed.UserID]
-	challengeStore.mu.Unlock()
+	// Search for user by email
+	for _, user := range userStore {
+		if user.Email == req.Email {
+			// Compare submitted password with stored bcrypt hash
+			if err := bcrypt.CompareHashAndPassword(user.PasswordHash, []byte(req.Password)); err != nil {
+				http.Error(w, "Invalid credentials", http.StatusUnauthorized)
+				return
+			}
 
-	// Perform high-level passkey assertion verification
-	// Includes signature check, origin/rp/challenge matching, and signCount replay protection
-	newCount, err := passkey.VerifyAssertion(
-		body,
-		"http://localhost:8080", // expected origin
-		"localhost",             // expected relying party ID
-		expectedChallenge,       // previously issued challenge
-		signCount,               // stored signCount
-		pubKey.Key,              // public key
-	)
-	if err != nil {
-		handlePasskeyError(w, err)
+			// Create new session and set it in cookie
+			session, cookie := CreateSession(user.ID)
+			sessionStore = append(sessionStore, session)
+			http.SetCookie(w, cookie)
+			w.WriteHeader(http.StatusOK)
+			return
+		}
+	}
+
+	// If no matching email found, return 404
+	http.Error(w, "User not found", http.StatusNotFound)
+}
+
+// LogoutHandler deletes the session associated with the current session cookie.
+func LogoutHandler(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
 		return
 	}
 
-	// Update stored signCount if verification succeeded
-	store.UpdateSignCount(parsed.RawID, newCount)
+	// Retrieve session cookie
+	cookie, err := r.Cookie("session_key")
+	if err != nil || cookie.Value == "" {
+		// Nothing to do if no cookie is found
+		w.WriteHeader(http.StatusOK)
+		return
+	}
 
-	// Respond with successful login message
+	// Delete session from store
+	sessionStore.DeleteBySessionKey(cookie.Value)
+	w.WriteHeader(http.StatusOK)
+}
+
+// GetMeHandler returns the current authenticated user's profile info.
+func GetMeHandler(w http.ResponseWriter, r *http.Request) {
+	type GetMeResponse struct {
+		ID    string `json:"id"`
+		Email string `json:"email"`
+		Name  string `json:"name"`
+	}
+
+	if r.Method != http.MethodGet {
+		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+
+	// Get session cookie
+	cookie, err := r.Cookie("session_key")
+	if err != nil || cookie.Value == "" {
+		http.Error(w, "Unauthorized", http.StatusUnauthorized)
+		return
+	}
+
+	// Look up session from cookie value
+	session := sessionStore.GetBySessionKey(cookie.Value)
+	if session == nil {
+		http.Error(w, "Unauthorized", http.StatusUnauthorized)
+		return
+	}
+
+	// Look up user associated with session
+	user := userStore.GetByUserID(session.UserID)
+	if user == nil {
+		http.Error(w, "User not found", http.StatusNotFound)
+		return
+	}
+
+	// Encode user data as JSON and respond
 	w.Header().Set("Content-Type", "application/json")
-	json.NewEncoder(w).Encode(map[string]string{
-		"message": "login OK",
-		"user":    parsed.UserID,
-	})
+	if err := json.NewEncoder(w).Encode(GetMeResponse{
+		ID:    user.ID,
+		Email: user.Email,
+		Name:  user.Name,
+	}); err != nil {
+		http.Error(w, "Failed to encode response", http.StatusInternalServerError)
+	}
 }
 
-// handleChallenge issues a new challenge and stores it for the given user.
-func handleChallenge(w http.ResponseWriter, r *http.Request) {
-	userID := r.URL.Query().Get("user_id")
-	if userID == "" {
-		http.Error(w, "user_id required", http.StatusBadRequest)
+// GetChallenge generates a random passkey challenge and stores it by key.
+func GetChallenge(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodGet {
+		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
 		return
 	}
 
-	// Generate secure random challenge
+	// Generate a challenge string (random 32 bytes base64url)
 	chal, err := passkey.GenerateChallenge()
 	if err != nil {
 		handlePasskeyError(w, err)
 		return
 	}
 
-	// Store challenge associated with this user
+	// Store the challenge using a random key
+	key := GenerateRandomKey()
 	challengeStore.mu.Lock()
-	challengeStore.val[userID] = chal
+	challengeStore.val[key] = chal
 	challengeStore.mu.Unlock()
 
+	// Return both the key and challenge string as JSON
 	w.Header().Set("Content-Type", "application/json")
 	json.NewEncoder(w).Encode(map[string]string{
-		"challenge": chal,
+		"key":   key,
+		"value": chal,
 	})
 }
 
-// handlePasskeyError inspects and logs structured PasskeyError responses.
+// RegisterPasskeyHandler accepts a WebAuthn attestation and stores a new credential.
+func RegisterPasskeyHandler(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+
+	// Authenticate session from cookie
+	cookie, err := r.Cookie("session_key")
+	if err != nil || cookie.Value == "" {
+		http.Error(w, "Unauthorized", http.StatusUnauthorized)
+		return
+	}
+	session := sessionStore.GetBySessionKey(cookie.Value)
+	if session == nil {
+		http.Error(w, "Unauthorized", http.StatusUnauthorized)
+		return
+	}
+	user := userStore.GetByUserID(session.UserID)
+	if user == nil {
+		http.Error(w, "User not found", http.StatusNotFound)
+		return
+	}
+
+	// Read request body
+	body, _ := io.ReadAll(r.Body)
+	var req struct {
+		Attestation string `json:"attestation"` // base64url-encoded attestation
+	}
+	json.Unmarshal(body, &req)
+
+	// Parse and decode attestation object
+	att, err := passkey.ParseAttestationObject(req.Attestation)
+	if err != nil {
+		handlePasskeyError(w, err)
+		return
+	}
+
+	// Extract authenticator data from attestation
+	auth, err := passkey.ParseAuthData(att.AuthData)
+	if err != nil {
+		handlePasskeyError(w, err)
+		return
+	}
+
+	// Convert COSE-encoded key to Go ECDSA format
+	pubKey, err := passkey.ConvertCOSEKeyToECDSA(auth.PublicKey)
+	if err != nil {
+		handlePasskeyError(w, err)
+		return
+	}
+
+	// Marshal public key to store as []byte
+	record := &passkey.PublicKeyRecord{Key: pubKey}
+	rb, err := passkey.MarshalPublicKey(*record)
+	if err != nil {
+		handlePasskeyError(w, err)
+		return
+	}
+
+	// Store new passkey in memory
+	credID := base64.RawURLEncoding.EncodeToString(auth.CredID)
+	passkeyStore = append(passkeyStore, Passkey{
+		CredentialID: credID,
+		UserID:       user.ID,
+		PublicKey:    rb,
+		SignCount:    auth.SignCount,
+	})
+
+	w.WriteHeader(http.StatusOK)
+}
+
+// LoginWithPasskeyHandler verifies an assertion and creates a session on success.
+func LoginWithPasskeyHandler(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+
+	// Parse request body
+	body, _ := io.ReadAll(r.Body)
+	var parsed struct {
+		Cred string `json:"cred"` // base64url-encoded assertion
+		Key  string `json:"key"`  // key to lookup challenge
+	}
+	if err := json.Unmarshal(body, &parsed); err != nil {
+		http.Error(w, "invalid json", http.StatusBadRequest)
+		return
+	}
+
+	// Decode base64 credential
+	decoded, err := base64.RawURLEncoding.DecodeString(parsed.Cred)
+	if err != nil {
+		http.Error(w, "invalid credential encoding", http.StatusBadRequest)
+		return
+	}
+
+	// Parse assertion
+	assertion, err := passkey.ParseAssertion(decoded)
+	if err != nil {
+		handlePasskeyError(w, err)
+		return
+	}
+
+	credID := assertion.Raw.RawID
+
+	// Look up stored credential by ID
+	pkrec, sc, err := passkeyStore.LookupCredential(credID)
+	if err != nil {
+		http.Error(w, "credential not found", http.StatusBadRequest)
+		return
+	}
+
+	// Decode stored public key
+	pk, err := passkey.UnmarshalPublicKey(pkrec)
+	if err != nil {
+		return
+	}
+
+	// Get expected challenge from store
+	challengeStore.mu.Lock()
+	expectedChallenge := challengeStore.val[parsed.Key]
+	challengeStore.mu.Unlock()
+
+	// Perform full WebAuthn assertion verification
+	newCount, err := passkey.VerifyAssertion(
+		decoded,
+		"http://localhost:8080", // expected origin
+		"localhost",             // relying party ID
+		expectedChallenge,       // challenge originally issued
+		sc,                      // previous sign count
+		pk.Key,                  // public key
+	)
+	if err != nil {
+		handlePasskeyError(w, err)
+		return
+	}
+
+	// Update sign count in memory
+	err = passkeyStore.UpdateSignCount(credID, newCount)
+	if err != nil {
+		http.Error(w, "failed to update sign count", http.StatusInternalServerError)
+		return
+	}
+
+	// Create session and issue session cookie
+	userID, err := passkeyStore.GetUserID(credID)
+	if err != nil {
+		http.Error(w, "credential not found", http.StatusBadRequest)
+		return
+	}
+	session, cookie := CreateSession(userID)
+	sessionStore = append(sessionStore, session)
+	http.SetCookie(w, cookie)
+	w.WriteHeader(http.StatusOK)
+}
+
+// handlePasskeyError standardizes error responses from the passkey library.
 func handlePasskeyError(w http.ResponseWriter, err error) {
 	var perr *passkey.PasskeyError
 	if errors.As(err, &perr) {
+		// If it's a PasskeyError, return its structured message and status
 		http.Error(w, perr.Message, perr.HTTPStatus)
 	} else {
+		// Otherwise return a generic error
 		log.Printf("unexpected error: %v", err)
 		http.Error(w, "internal server error", http.StatusInternalServerError)
 	}
 }
 
-// main launches the example HTTP server on :8080
+// main starts the HTTP server and registers all routes.
 func main() {
-	http.Handle("/", http.FileServer(http.Dir("./public")))   // Serve static frontend
-	http.HandleFunc("/challenge", handleChallenge)            // Issue challenge
-	http.HandleFunc("/register/finish", handleRegisterFinish) // Handle attestation
-	http.HandleFunc("/login/finish", handleLoginFinish)       // Handle assertion
+	// Serve static frontend files from ./public directory
+	http.Handle("/", http.FileServer(http.Dir("./public")))
 
-	log.Println("Example passkey server running on :8080")
-	http.ListenAndServe(":8080", nil)
+	// Register each backend API handler
+	http.HandleFunc("/login", LoginHandler)
+	http.HandleFunc("/logout", LogoutHandler)
+	http.HandleFunc("/me", GetMeHandler)
+	http.HandleFunc("/passkey/challenge", GetChallenge)
+	http.HandleFunc("/passkey/register", RegisterPasskeyHandler)
+	http.HandleFunc("/passkey/login", LoginWithPasskeyHandler)
+
+	log.Println("Server started on :8080")
+
+	// Start HTTP server on port 8080
+	if err := http.ListenAndServe(":8080", nil); err != nil {
+		log.Fatalf("Failed to start server: %v", err)
+	}
 }
