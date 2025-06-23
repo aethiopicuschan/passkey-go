@@ -17,4 +17,5 @@ go run .
 ```
 
 Then, open your browser and navigate to [http://localhost:8080](http://localhost:8080).
-You'll see a simple UI with buttons to register and login using a passkey.
+You'll see a simple UI with buttons. You can login as `alice@example.com` or `bob@example.com` with `password` as the password.
+After logging in, you can register a passkey for the user and then authenticate using the passkey.

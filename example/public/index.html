@@ -5,173 +5,311 @@
         <title>Passkey Demo</title>
     </head>
     <body>
-        <h1>Passkey Demo</h1>
+        <h1>passkey-go demo</h1>
 
-        <label>
-            User ID:
-            <input
-                type="text"
-                id="userID"
-                placeholder="unique-user-id"
-                oninput="updateButtons()"
-            />
-        </label>
-        <br />
-        <label>
-            Name:
-            <input type="text" id="name" placeholder="user@example.com" />
-        </label>
-        <br />
-        <label>
-            Display Name:
-            <input type="text" id="displayName" placeholder="Test User" />
-        </label>
-        <br />
+        <!-- Section for displaying user information and logout/register buttons -->
+        <div id="user-info" style="display: none">
+            <!-- This content will be filled dynamically after login -->
+        </div>
 
-        <button id="registerBtn" onclick="register()" disabled>Register</button>
-        <button id="loginBtn" onclick="login()" disabled>Login</button>
-
-        <div id="output" style="margin-top: 1em; font-family: monospace"></div>
+        <!-- Login form for email/password-based login -->
+        <div id="login-container">
+            <label>
+                Email:
+                <input type="text" id="email" placeholder="user@example.com" />
+            </label>
+            <br />
+            <label>
+                Password:
+                <input type="password" id="password" placeholder="password" />
+            </label>
+            <br />
+            <!-- Login with email/password -->
+            <button id="loginBtn" onclick="login()">Login</button>
+            <!-- Login using WebAuthn passkey -->
+            <button id="loginWithPasskeyBtn" onclick="loginWithPasskey()">
+                Login with passkey
+            </button>
+        </div>
 
         <script>
-            function base64urlEncode(buf) {
-                const bin = String.fromCharCode(...buf);
-                return btoa(bin)
+            // On page load, check if user is already logged in
+            document.addEventListener("DOMContentLoaded", async () => {
+                try {
+                    const user = await getMe(); // Try to fetch user profile
+                    showUserInfo(user); // Display user info
+                    document.getElementById("login-container").style.display =
+                        "none"; // Hide login form
+                } catch {
+                    // Do nothing if not logged in
+                }
+            });
+
+            // Render user info and attach button handlers
+            function showUserInfo(user) {
+                const { email, name } = user;
+                const container = document.getElementById("user-info");
+
+                // Fill in user info and buttons
+                container.innerHTML = `
+                  <h2>You are logged in as...</h2>
+                  <p><strong>Name:</strong> ${name}</p>
+                  <p><strong>Email:</strong> ${email}</p>
+                  <button id="logoutBtn">Logout</button>
+                  <button id="registerBtn">Register Passkey</button>
+                `;
+                container.style.display = "block";
+
+                // Hook logout and passkey registration button actions
+                document
+                    .getElementById("logoutBtn")
+                    .addEventListener("click", logout);
+                document
+                    .getElementById("registerBtn")
+                    .addEventListener("click", registerPasskey);
+            }
+
+            // Call `/me` API to get current user profile
+            async function getMe() {
+                const res = await fetch("/me", {
+                    method: "GET",
+                    headers: { "Content-Type": "application/json" },
+                });
+                if (!res.ok) throw new Error("Not logged in");
+                return res.json();
+            }
+
+            // Login using email and password
+            async function login() {
+                const email = document.getElementById("email").value;
+                const password = document.getElementById("password").value;
+
+                if (!email || !password) {
+                    alert("Please enter both email and password.");
+                    return;
+                }
+
+                try {
+                    const loginRes = await fetch("/login", {
+                        method: "POST",
+                        headers: { "Content-Type": "application/json" },
+                        body: JSON.stringify({
+                            Email: email,
+                            Password: password,
+                        }),
+                    });
+
+                    if (!loginRes.ok) {
+                        const errText = await loginRes.text();
+                        throw new Error(
+                            errText || `Server returned ${loginRes.status}`,
+                        );
+                    }
+
+                    // If login successful, update UI
+                    const me = await getMe();
+                    showUserInfo(me);
+                    document.getElementById("login-container").style.display =
+                        "none";
+                } catch (err) {
+                    console.error("Error during login:", err);
+                    alert("Login failed. Please try again.");
+                }
+            }
+
+            // Logout and show login form again
+            async function logout() {
+                try {
+                    await fetch("/logout", { method: "POST" });
+                    document.getElementById("user-info").style.display = "none";
+                    document.getElementById("user-info").innerHTML = "";
+                    document.getElementById("login-container").style.display =
+                        "block";
+                } catch (err) {
+                    console.error("Error during logout:", err);
+                    alert("Logout failed. Please try again.");
+                }
+            }
+
+            // Encode binary buffer to base64url string
+            function base64urlEncode(buffer) {
+                return btoa(String.fromCharCode(...new Uint8Array(buffer)))
                     .replace(/\+/g, "-")
                     .replace(/\//g, "_")
                     .replace(/=+$/, "");
             }
 
+            // Decode base64url string to Uint8Array
             function base64urlDecode(str) {
-                str = str.replace(/-/g, "+").replace(/_/g, "/");
-                while (str.length % 4 !== 0) str += "=";
-                return Uint8Array.from(atob(str), (c) => c.charCodeAt(0));
-            }
-
-            function getUserID() {
-                return (
-                    document.getElementById("userID").value.trim() || "user-id"
+                let normalized = str.replace(/-/g, "+").replace(/_/g, "/");
+                while (normalized.length % 4 !== 0) normalized += "=";
+                return Uint8Array.from(atob(normalized), (c) =>
+                    c.charCodeAt(0),
                 );
             }
 
-            function setOutput(text) {
-                document.getElementById("output").textContent = text;
+            // Request a passkey challenge from the server
+            async function getChallenge() {
+                const res = await fetch("/passkey/challenge");
+                const { value, key } = await res.json();
+                return { value, key };
             }
 
-            function updateButtons() {
-                const userID = document.getElementById("userID").value.trim();
-                const isDisabled = userID === "";
-                document.getElementById("registerBtn").disabled = isDisabled;
-                document.getElementById("loginBtn").disabled = isDisabled;
-            }
+            // Register a new passkey (navigator.credentials.create)
+            async function registerPasskey() {
+                try {
+                    // 1. Get challenge from server
+                    const { value, key } = await getChallenge();
+                    const challenge = base64urlDecode(value);
 
-            window.addEventListener("DOMContentLoaded", updateButtons);
+                    // 2. Get current user info
+                    const me = await getMe();
+                    const userIdBytes = new TextEncoder().encode(me.id);
 
-            async function getChallenge(userID) {
-                const res = await fetch(
-                    "/challenge?user_id=" + encodeURIComponent(userID),
-                );
-                const { challenge } = await res.json();
-                return base64urlDecode(challenge);
-            }
-
-            async function register() {
-                const userID = getUserID();
-                const name =
-                    document.getElementById("name").value || "user@example.com";
-                const displayName =
-                    document.getElementById("displayName").value || "Test User";
-                const challenge = await getChallenge(userID);
-
-                const options = {
-                    publicKey: {
-                        challenge: challenge.buffer,
-                        rp: { name: "Passkey Demo", id: "localhost" },
+                    // 3. Create publicKeyCredentialCreationOptions
+                    const publicKeyOptions = {
+                        challenge,
+                        rp: {
+                            name: "passkey-go demo",
+                            id: window.location.hostname,
+                        },
                         user: {
-                            id: Uint8Array.from(userID, (c) => c.charCodeAt(0)),
-                            name: name,
-                            displayName: displayName,
+                            id: userIdBytes,
+                            name: me.name,
+                            displayName: me.name,
                         },
                         pubKeyCredParams: [{ type: "public-key", alg: -7 }],
                         authenticatorSelection: {
-                            userVerification: "preferred",
+                            authenticatorAttachment: "platform",
+                            userVerification: "required",
+                            residentKey: "required",
                         },
                         timeout: 60000,
-                        attestation: "none",
-                    },
-                };
-
-                try {
-                    const cred = await navigator.credentials.create(options);
-                    const attObj = new Uint8Array(
-                        cred.response.attestationObject,
-                    );
-
-                    const payload = {
-                        attestation: base64urlEncode(attObj),
-                        user_id: userID,
+                        attestation: "direct",
                     };
 
-                    const res = await fetch("/register/finish", {
+                    // 4. Create a new credential
+                    const credential = await navigator.credentials.create({
+                        publicKey: publicKeyOptions,
+                    });
+                    if (!credential) {
+                        throw new Error("Failed to create passkey");
+                    }
+
+                    // 5. Extract and encode attestation object
+                    const attResp =
+                        /** @type {AuthenticatorAttestationResponse} */ (
+                            credential.response
+                        );
+                    const attestationArray = new Uint8Array(
+                        attResp.attestationObject,
+                    );
+                    const attestationBase64url =
+                        base64urlEncode(attestationArray);
+
+                    // 6. Send it to the server for registration
+                    const res = await fetch("/passkey/register", {
                         method: "POST",
                         headers: { "Content-Type": "application/json" },
-                        body: JSON.stringify(payload),
+                        body: JSON.stringify({
+                            attestation: attestationBase64url,
+                        }),
                     });
-                    const text = await res.text();
-                    setOutput("Register result: " + text);
+
+                    if (!res.ok) {
+                        const errText = await res.text();
+                        throw new Error(
+                            errText || `Server returned ${res.status}`,
+                        );
+                    }
+
+                    alert("Passkey registered successfully!");
                 } catch (err) {
-                    setOutput("Register error: " + err.message);
+                    console.error("Register error:", err);
+                    alert(err.message || "Passkey registration failed.");
                 }
             }
 
-            async function login() {
-                const userID = getUserID();
-                const challenge = await getChallenge(userID);
-
-                const options = {
-                    publicKey: {
-                        challenge: challenge.buffer,
-                        allowCredentials: [],
-                        timeout: 60000,
-                        userVerification: "preferred",
-                    },
-                };
-
+            // Login using WebAuthn passkey
+            async function loginWithPasskey() {
                 try {
-                    const assertion = await navigator.credentials.get(options);
-                    const authData = new Uint8Array(
-                        assertion.response.authenticatorData,
-                    );
-                    const clientDataJSON = new Uint8Array(
-                        assertion.response.clientDataJSON,
-                    );
-                    const signature = new Uint8Array(
-                        assertion.response.signature,
-                    );
-                    const rawId = new Uint8Array(assertion.rawId);
+                    // 1. Get challenge and decode it
+                    const { value, key } = await getChallenge();
+                    const challenge = base64urlDecode(value);
 
-                    const payload = {
-                        id: assertion.id,
+                    // 2. Request credential from browser (navigator.credentials.get)
+                    const assertion = await navigator.credentials.get({
+                        publicKey: {
+                            challenge,
+                            timeout: 60000,
+                            rpId: window.location.hostname,
+                            userVerification: "required",
+                        },
+                        mediation: "conditional",
+                    });
+
+                    if (!assertion) {
+                        alert(
+                            "No passkey found or user cancelled the operation.",
+                        );
+                        return;
+                    }
+
+                    // 3. Extract and encode assertion fields
+                    const { id, rawId, response, type } = assertion;
+                    const {
+                        authenticatorData,
+                        clientDataJSON,
+                        signature,
+                        userHandle,
+                    } = response;
+
+                    const credentialObject = {
+                        id,
                         rawId: base64urlEncode(rawId),
-                        type: assertion.type,
-                        user_id: userID,
+                        type,
                         response: {
-                            authenticatorData: base64urlEncode(authData),
+                            authenticatorData:
+                                base64urlEncode(authenticatorData),
                             clientDataJSON: base64urlEncode(clientDataJSON),
                             signature: base64urlEncode(signature),
-                            userHandle: null,
+                            userHandle: userHandle
+                                ? base64urlEncode(userHandle)
+                                : null,
                         },
                     };
 
-                    const res = await fetch("/login/finish", {
+                    // 4. Encode entire credential as a string
+                    const encodedCredential = base64urlEncode(
+                        new TextEncoder().encode(
+                            JSON.stringify(credentialObject),
+                        ).buffer,
+                    );
+
+                    // 5. Send assertion to server
+                    const res = await fetch("/passkey/login", {
                         method: "POST",
                         headers: { "Content-Type": "application/json" },
-                        body: JSON.stringify(payload),
+                        body: JSON.stringify({
+                            cred: encodedCredential,
+                            key: key,
+                        }),
                     });
-                    const text = await res.text();
-                    setOutput("Login result: " + text);
+
+                    if (!res.ok) {
+                        const errText = await res.text();
+                        throw new Error(
+                            errText || `Server returned ${res.status}`,
+                        );
+                    }
+
+                    // 6. On success, show user info and hide login form
+                    const user = await getMe();
+                    showUserInfo(user);
+                    document.getElementById("login-container").style.display =
+                        "none";
                 } catch (err) {
-                    setOutput("Login error: " + err.message);
+                    console.error("Login with passkey error:", err);
                 }
             }
         </script>
