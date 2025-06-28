@@ -4,6 +4,7 @@
 [![Go Reference](https://pkg.go.dev/badge/github.com/aethiopicuschan/passkey-go.svg)](https://pkg.go.dev/github.com/aethiopicuschan/passkey-go)
 [![Go Report Card](https://goreportcard.com/badge/github.com/aethiopicuschan/passkey-go)](https://goreportcard.com/report/github.com/aethiopicuschan/passkey-go)
 [![CI](https://github.com/aethiopicuschan/passkey-go/actions/workflows/ci.yaml/badge.svg)](https://github.com/aethiopicuschan/passkey-go/actions/workflows/ci.yaml)
+[![codecov](https://codecov.io/gh/aethiopicuschan/passkey-go/graph/badge.svg?token=6A4Y75PXH5)](https://codecov.io/gh/aethiopicuschan/passkey-go)
 
 `passkey-go` is a Go library for handling server-side WebAuthn / passkey verification.
 
@@ -50,9 +51,8 @@ pubKey, err := passkey.ConvertCOSEKeyToECDSA(authData.PublicKey)
 You can now persist:
 
 - `authData.CredID` (base64url-encoded)
-- `pubKey` (as *ecdsa.PublicKey)
+- `pubKey` (as \*ecdsa.PublicKey)
 - `authData.SignCount` (initial counter)
-
 
 ### ✅ Authentication Flow (High-level)
 
