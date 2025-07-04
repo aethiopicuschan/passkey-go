@@ -31,11 +31,12 @@ func TestParseAssertion(t *testing.T) {
 	}
 
 	tests := []struct {
-		name      string
-		rawBody   []byte
-		input     args
-		wantErr   bool
-		wantErrIs error
+		name             string
+		rawBody          []byte
+		input            args
+		assertionesponse *passkey.AssertionResponse
+		wantErr          bool
+		wantErrIs        error
 	}{
 		{
 			name: "valid data (raw encoding)",
@@ -92,6 +93,42 @@ func TestParseAssertion(t *testing.T) {
 			wantErr:   true,
 			wantErrIs: passkey.ErrSignatureInvalid,
 		},
+		{
+			name: "invalid assertion response type",
+			input: args{
+				authData:   validAuthData,
+				clientData: validClientData,
+				signature:  validSignature,
+			},
+			assertionesponse: &passkey.AssertionResponse{
+				ID:    "test-id",
+				Type:  "invalid-type",
+				RawID: "test-raw-id",
+			},
+			wantErr:   true,
+			wantErrIs: passkey.ErrInvalidClientData,
+		},
+		{
+			name: "invalid user handle",
+			input: args{
+				authData:   validAuthData,
+				clientData: validClientData,
+				signature:  validSignature,
+			},
+			assertionesponse: &passkey.AssertionResponse{
+				ID:    "test-id",
+				Type:  "public-key",
+				RawID: "test-raw-id",
+				Response: passkey.AssertionResponseData{
+					AuthenticatorData: validAuthData,
+					ClientDataJSON:    validClientData,
+					Signature:         validSignature,
+					UserHandle:        "ERROR",
+				},
+			},
+			wantErr:   true,
+			wantErrIs: passkey.ErrInvalidClientData,
+		},
 	}
 
 	for _, tt := range tests {
@@ -104,14 +141,19 @@ func TestParseAssertion(t *testing.T) {
 			if tt.rawBody != nil {
 				body = tt.rawBody
 			} else {
-				ar := passkey.AssertionResponse{
-					ID:    "test-id",
-					Type:  "public-key",
-					RawID: "test-raw-id",
+				var ar passkey.AssertionResponse
+				if tt.assertionesponse == nil {
+					ar = passkey.AssertionResponse{
+						ID:    "test-id",
+						Type:  "public-key",
+						RawID: "test-raw-id",
+					}
+					ar.Response.AuthenticatorData = tt.input.authData
+					ar.Response.ClientDataJSON = tt.input.clientData
+					ar.Response.Signature = tt.input.signature
+				} else {
+					ar = *tt.assertionesponse
 				}
-				ar.Response.AuthenticatorData = tt.input.authData
-				ar.Response.ClientDataJSON = tt.input.clientData
-				ar.Response.Signature = tt.input.signature
 				body, err = json.Marshal(ar)
 				assert.NoError(t, err)
 			}
@@ -217,11 +259,14 @@ func TestVerifyAssertion(t *testing.T) {
 
 	tests := []struct {
 		name             string
+		req              []byte
 		tamperSig        bool
 		tamperOrigin     bool
 		tamperChallenge  bool
 		storedSignCount  uint32
 		authenticatorInc uint32
+		rpID             string
+		authData         []byte
 		wantErr          bool
 		wantErrIs        error
 	}{
@@ -256,11 +301,33 @@ func TestVerifyAssertion(t *testing.T) {
 			wantErrIs:        passkey.ErrChallengeMismatch,
 		},
 		{
+			name:             "auth data invalid",
+			storedSignCount:  4,
+			authenticatorInc: 5,
+			authData:         []byte("invalid-auth-data"),
+			wantErr:          true,
+			wantErrIs:        passkey.ErrAuthDataInvalid,
+		},
+		{
+			name:             "auth data invalid by rpid",
+			storedSignCount:  4,
+			authenticatorInc: 5,
+			rpID:             "wrongrpid",
+			wantErr:          true,
+			wantErrIs:        passkey.ErrAuthDataInvalid,
+		},
+		{
 			name:             "signCount replay",
 			storedSignCount:  10,
 			authenticatorInc: 8,
 			wantErr:          true,
 			wantErrIs:        passkey.ErrSignCountReplay,
+		},
+		{
+			name:      "invalid client data",
+			req:       []byte("invalid data"),
+			wantErr:   true,
+			wantErrIs: passkey.ErrInvalidClientData,
 		},
 	}
 
@@ -268,22 +335,39 @@ func TestVerifyAssertion(t *testing.T) {
 		t.Run(tt.name, func(t *testing.T) {
 			t.Parallel()
 
+			rpIDLocal := rpID
+
 			req, pubKey, _ := generateAssertionRequest(
 				t,
 				privKey,
 				challenge,
 				origin,
-				rpID,
+				rpIDLocal,
 				tt.authenticatorInc,
 				tt.tamperSig,
 				tt.tamperOrigin,
 				tt.tamperChallenge,
 			)
 
+			if tt.authData != nil {
+				authData := make([]byte, len(tt.authData))
+				copy(authData, tt.authData)
+				authDataStr := base64.RawURLEncoding.EncodeToString(authData)
+				req = bytes.Replace(req, []byte("authenticatorData"), []byte(authDataStr), 1)
+			}
+
+			if tt.req != nil {
+				req = tt.req
+			}
+
+			if tt.rpID != "" {
+				rpIDLocal = tt.rpID
+			}
+
 			newCount, err := passkey.VerifyAssertion(
 				req,
 				origin,
-				rpID,
+				rpIDLocal,
 				challengeStr,
 				tt.storedSignCount,
 				pubKey,
@@ -299,6 +383,27 @@ func TestVerifyAssertion(t *testing.T) {
 				assert.NoError(t, err)
 				assert.Equal(t, tt.authenticatorInc, newCount)
 			}
+		})
+	}
+}
+
+func TestEqualBytes(t *testing.T) {
+	tests := []struct {
+		name     string
+		a, b     []byte
+		expected bool
+	}{
+		{"equal empty", []byte{}, []byte{}, true},
+		{"equal single byte", []byte{0x01}, []byte{0x01}, true},
+		{"equal multiple bytes", []byte{0x01, 0x02, 0x03}, []byte{0x01, 0x02, 0x03}, true},
+		{"not equal different lengths", []byte{0x01}, []byte{0x01, 0x02}, false},
+		{"not equal different content", []byte{0x01, 0x02}, []byte{0x02, 0x01}, false},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+			assert.Equal(t, tt.expected, passkey.EqualBytes(tt.a, tt.b))
 		})
 	}
 }

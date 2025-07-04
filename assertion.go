@@ -12,15 +12,18 @@ import (
 
 // AssertionResponse represents the structure of an assertion response sent by a client (browser or authenticator device).
 type AssertionResponse struct {
-	ID       string `json:"id"`    // Credential ID
-	Type     string `json:"type"`  // Must be "public-key"
-	RawID    string `json:"rawId"` // Base64url-encoded credential ID
-	Response struct {
-		AuthenticatorData string `json:"authenticatorData"` // Base64url-encoded authenticator data
-		ClientDataJSON    string `json:"clientDataJSON"`    // Base64url-encoded client data JSON
-		Signature         string `json:"signature"`         // Base64url-encoded signature
-		UserHandle        string `json:"userHandle"`        // Optional base64url-encoded user handle
-	} `json:"response"`
+	ID       string                `json:"id"`    // Credential ID
+	Type     string                `json:"type"`  // Must be "public-key"
+	RawID    string                `json:"rawId"` // Base64url-encoded credential ID
+	Response AssertionResponseData `json:"response"`
+}
+
+// AssertionResponseData represents the data structure of the assertion response.
+type AssertionResponseData struct {
+	AuthenticatorData string `json:"authenticatorData"` // Base64url-encoded authenticator data
+	ClientDataJSON    string `json:"clientDataJSON"`    // Base64url-encoded client data JSON
+	Signature         string `json:"signature"`         // Base64url-encoded signature
+	UserHandle        string `json:"userHandle"`        // Optional base64url-encoded user handle
 }
 
 // ParsedAssertion contains all decoded fields from an assertion response.
