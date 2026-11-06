@@ -138,6 +138,9 @@ func VerifyAssertion(
 	if err != nil {
 		return 0, errors.Join(ErrInvalidClientData, err)
 	}
+	if clientData.Type != "webauthn.get" {
+		return 0, ErrAssertionTypeInvalid
+	}
 
 	// Step 3: Verify challenge
 	if err := CheckChallenge(expectedChallenge, clientData.Challenge); err != nil {

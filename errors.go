@@ -39,13 +39,14 @@ var (
 
 // --- Assertion Errors ---
 var (
-	ErrInvalidClientData = &PasskeyError{"E1001", "invalid clientDataJSON", 400, "clientDataJSON"}
-	ErrChallengeMismatch = &PasskeyError{"E1002", "challenge mismatch", 400, "challenge"}
-	ErrSignatureInvalid  = &PasskeyError{"E1003", "signature verification failed", 400, ""}
-	ErrAuthDataInvalid   = &PasskeyError{"E1004", "invalid authenticator data", 400, "authenticatorData"}
-	ErrSignCountReplay   = &PasskeyError{"E1005", "replay attack detected", 400, ""}
-	ErrChallengeDecode   = &PasskeyError{"E1006", "failed to decode challenge", 400, "challenge"}
-	ErrChallengeGen      = &PasskeyError{"E1007", "failed to generate challenge", 500, ""}
+	ErrInvalidClientData    = &PasskeyError{"E1001", "invalid clientDataJSON", 400, "clientDataJSON"}
+	ErrChallengeMismatch    = &PasskeyError{"E1002", "challenge mismatch", 400, "challenge"}
+	ErrSignatureInvalid     = &PasskeyError{"E1003", "signature verification failed", 400, ""}
+	ErrAuthDataInvalid      = &PasskeyError{"E1004", "invalid authenticator data", 400, "authenticatorData"}
+	ErrSignCountReplay      = &PasskeyError{"E1005", "replay attack detected", 400, ""}
+	ErrChallengeDecode      = &PasskeyError{"E1006", "failed to decode challenge", 400, "challenge"}
+	ErrChallengeGen         = &PasskeyError{"E1007", "failed to generate challenge", 500, ""}
+	ErrAssertionTypeInvalid = &PasskeyError{"E1008", "invalid assertion client data type", 400, "clientDataJSON.type"}
 )
 
 // --- Storage / Credential Errors ---

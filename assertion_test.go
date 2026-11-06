@@ -144,6 +144,7 @@ func generateAssertionRequest(
 	tamperSig bool,
 	tamperOrigin bool,
 	tamperChallenge bool,
+	tamperType bool,
 ) ([]byte, *ecdsa.PublicKey, uint32) {
 	t.Helper()
 
@@ -155,8 +156,12 @@ func generateAssertionRequest(
 	if tamperOrigin {
 		clientOrigin = "https://evil.example.com"
 	}
+	clientType := "webauthn.get"
+	if tamperType {
+		clientType = "webauthn.create"
+	}
 	clientData := map[string]string{
-		"type":      "webauthn.get",
+		"type":      clientType,
 		"challenge": base64.RawURLEncoding.EncodeToString(clientChallenge),
 		"origin":    clientOrigin,
 	}
@@ -221,6 +226,7 @@ func TestVerifyAssertion(t *testing.T) {
 		tamperSig        bool
 		tamperOrigin     bool
 		tamperChallenge  bool
+		tamperType       bool
 		storedSignCount  uint32
 		authenticatorInc uint32
 		wantErr          bool
@@ -257,6 +263,14 @@ func TestVerifyAssertion(t *testing.T) {
 			wantErrIs:        passkey.ErrChallengeMismatch,
 		},
 		{
+			name:             "wrong client data type",
+			tamperType:       true,
+			storedSignCount:  4,
+			authenticatorInc: 5,
+			wantErr:          true,
+			wantErrIs:        passkey.ErrAssertionTypeInvalid,
+		},
+		{
 			name:             "signCount replay",
 			storedSignCount:  10,
 			authenticatorInc: 8,
@@ -279,6 +293,7 @@ func TestVerifyAssertion(t *testing.T) {
 				tt.tamperSig,
 				tt.tamperOrigin,
 				tt.tamperChallenge,
+				tt.tamperType,
 			)
 
 			newCount, err := passkey.VerifyAssertion(
