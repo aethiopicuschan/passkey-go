@@ -145,6 +145,7 @@ func generateAssertionRequest(
 	tamperOrigin bool,
 	tamperChallenge bool,
 	tamperType bool,
+	authFlags byte,
 ) ([]byte, *ecdsa.PublicKey, uint32) {
 	t.Helper()
 
@@ -173,7 +174,7 @@ func generateAssertionRequest(
 	rpIDHash := sha256.Sum256([]byte(rpID))
 	authData := bytes.NewBuffer(nil)
 	authData.Write(rpIDHash[:])
-	authData.WriteByte(0x01)
+	authData.WriteByte(authFlags)
 	binary.Write(authData, binary.BigEndian, signCount)
 
 	signed := append(authData.Bytes(), clientHash[:]...)
@@ -227,6 +228,8 @@ func TestVerifyAssertion(t *testing.T) {
 		tamperOrigin     bool
 		tamperChallenge  bool
 		tamperType       bool
+		authFlags        byte
+		requireUV        bool
 		storedSignCount  uint32
 		authenticatorInc uint32
 		wantErr          bool
@@ -234,12 +237,14 @@ func TestVerifyAssertion(t *testing.T) {
 	}{
 		{
 			name:             "valid",
+			authFlags:        0x01,
 			storedSignCount:  4,
 			authenticatorInc: 5,
 			wantErr:          false,
 		},
 		{
 			name:             "wrong signature",
+			authFlags:        0x01,
 			tamperSig:        true,
 			storedSignCount:  4,
 			authenticatorInc: 5,
@@ -248,6 +253,7 @@ func TestVerifyAssertion(t *testing.T) {
 		},
 		{
 			name:             "wrong origin",
+			authFlags:        0x01,
 			tamperOrigin:     true,
 			storedSignCount:  4,
 			authenticatorInc: 5,
@@ -256,6 +262,7 @@ func TestVerifyAssertion(t *testing.T) {
 		},
 		{
 			name:             "wrong challenge",
+			authFlags:        0x01,
 			tamperChallenge:  true,
 			storedSignCount:  4,
 			authenticatorInc: 5,
@@ -264,6 +271,7 @@ func TestVerifyAssertion(t *testing.T) {
 		},
 		{
 			name:             "wrong client data type",
+			authFlags:        0x01,
 			tamperType:       true,
 			storedSignCount:  4,
 			authenticatorInc: 5,
@@ -271,7 +279,32 @@ func TestVerifyAssertion(t *testing.T) {
 			wantErrIs:        passkey.ErrAssertionTypeInvalid,
 		},
 		{
+			name:             "user presence missing",
+			authFlags:        0x00,
+			storedSignCount:  4,
+			authenticatorInc: 5,
+			wantErr:          true,
+			wantErrIs:        passkey.ErrUserPresenceRequired,
+		},
+		{
+			name:             "user verification required but missing",
+			authFlags:        0x01,
+			storedSignCount:  4,
+			authenticatorInc: 5,
+			requireUV:        true,
+			wantErr:          true,
+			wantErrIs:        passkey.ErrUserVerificationRequired,
+		},
+		{
+			name:             "user verification satisfied",
+			authFlags:        0x05,
+			storedSignCount:  4,
+			authenticatorInc: 5,
+			requireUV:        true,
+		},
+		{
 			name:             "signCount replay",
+			authFlags:        0x01,
 			storedSignCount:  10,
 			authenticatorInc: 8,
 			wantErr:          true,
@@ -294,6 +327,7 @@ func TestVerifyAssertion(t *testing.T) {
 				tt.tamperOrigin,
 				tt.tamperChallenge,
 				tt.tamperType,
+				tt.authFlags,
 			)
 
 			newCount, err := passkey.VerifyAssertion(
@@ -304,6 +338,7 @@ func TestVerifyAssertion(t *testing.T) {
 				tt.storedSignCount,
 				pubKey,
 				[]byte("credential-id"),
+				tt.requireUV,
 			)
 
 			if tt.wantErr {

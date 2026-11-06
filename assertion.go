@@ -123,6 +123,7 @@ func VerifyAssertion(
 	storedSignCount uint32,
 	pubKey *ecdsa.PublicKey,
 	expectedCredentialID []byte,
+	requireUserVerification bool,
 ) (uint32, error) {
 	// Step 1: Parse assertion
 	parsed, err := ParseAssertion(jsonBody)
@@ -151,6 +152,16 @@ func VerifyAssertion(
 	authData, err := ParseAuthData(parsed.AuthData)
 	if err != nil {
 		return 0, errors.Join(ErrAuthDataInvalid, err)
+	}
+	const (
+		flagUserPresent  = 1 << 0
+		flagUserVerified = 1 << 2
+	)
+	if authData.Flags&flagUserPresent == 0 {
+		return 0, ErrUserPresenceRequired
+	}
+	if requireUserVerification && authData.Flags&flagUserVerified == 0 {
+		return 0, ErrUserVerificationRequired
 	}
 
 	// Step 5: Validate RP ID hash

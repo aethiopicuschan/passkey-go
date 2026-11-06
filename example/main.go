@@ -435,6 +435,7 @@ func LoginWithPasskeyHandler(w http.ResponseWriter, r *http.Request) {
 		sc,                      // previous sign count
 		pk.Key,                  // public key
 		assertion.CredentialID,  // credential ID tied to the selected stored key
+		false,                   // user verification is preferred, not required, in these options
 	)
 	if err != nil {
 		handlePasskeyError(w, err)

@@ -86,6 +86,7 @@ newCount, err := passkey.VerifyAssertion(
     storedSignCount,    // last known signCount
     pubKey,             // *ecdsa.PublicKey for this credential
     expectedCredentialID, // raw credential ID tied to pubKey
+    requireUserVerification, // true only when UV is required by your policy
 )
 ```
 
@@ -93,6 +94,7 @@ If `err == nil`, then:
 
 - The signature is valid
 - `clientData.origin`, `challenge`, and `rpID` match expectations
+- authenticator user presence is set; user verification is checked when required
 - `signCount` is newer than stored
 
 Update your stored `signCount` to `newCount`.
