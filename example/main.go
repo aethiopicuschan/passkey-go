@@ -329,9 +329,14 @@ func RegisterPasskeyHandler(w http.ResponseWriter, r *http.Request) {
 	// Read request body
 	body, _ := io.ReadAll(r.Body)
 	var req struct {
-		Attestation string `json:"attestation"` // base64url-encoded attestation
+		Attestation    string `json:"attestation"`    // base64url-encoded attestation
+		ClientDataJSON string `json:"clientDataJSON"` // base64url-encoded client data
+		Key            string `json:"key"`            // key for the outstanding registration challenge
 	}
-	json.Unmarshal(body, &req)
+	if err := json.Unmarshal(body, &req); err != nil {
+		http.Error(w, "invalid request body", http.StatusBadRequest)
+		return
+	}
 
 	// Parse and decode attestation object
 	att, err := passkey.ParseAttestationObject(req.Attestation)
@@ -340,8 +345,31 @@ func RegisterPasskeyHandler(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Extract authenticator data from attestation
-	auth, err := passkey.ParseAuthData(att.AuthData)
+	clientDataJSON, err := base64.RawURLEncoding.DecodeString(req.ClientDataJSON)
+	if err != nil {
+		http.Error(w, "invalid client data encoding", http.StatusBadRequest)
+		return
+	}
+
+	// Atomically consume the registration challenge so it cannot be replayed.
+	challengeStore.mu.Lock()
+	expectedChallenge, ok := challengeStore.val[req.Key]
+	if ok {
+		delete(challengeStore.val, req.Key)
+	}
+	challengeStore.mu.Unlock()
+	if !ok {
+		http.Error(w, "registration challenge not found or already used", http.StatusBadRequest)
+		return
+	}
+
+	auth, err := passkey.VerifyRegistration(
+		clientDataJSON,
+		att.AuthData,
+		"http://localhost:8080",
+		"localhost",
+		expectedChallenge,
+	)
 	if err != nil {
 		handlePasskeyError(w, err)
 		return
