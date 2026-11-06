@@ -85,6 +85,7 @@ newCount, err := passkey.VerifyAssertion(
     expectedChallenge,  // base64url-encoded challenge issued to this user
     storedSignCount,    // last known signCount
     pubKey,             // *ecdsa.PublicKey for this credential
+    expectedCredentialID, // raw credential ID tied to pubKey
 )
 ```
 

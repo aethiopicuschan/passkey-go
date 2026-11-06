@@ -22,6 +22,7 @@ func TestParseAssertion(t *testing.T) {
 	validAuthData := base64.RawURLEncoding.EncodeToString([]byte("auth-data"))
 	validClientData := base64.RawURLEncoding.EncodeToString([]byte("client-data"))
 	validSignature := base64.RawURLEncoding.EncodeToString([]byte("signature"))
+	validCredentialID := base64.RawURLEncoding.EncodeToString([]byte("credential-id"))
 
 	type args struct {
 		authData   string
@@ -105,9 +106,9 @@ func TestParseAssertion(t *testing.T) {
 				body = tt.rawBody
 			} else {
 				ar := passkey.AssertionResponse{
-					ID:    "test-id",
+					ID:    validCredentialID,
 					Type:  "public-key",
-					RawID: "test-raw-id",
+					RawID: validCredentialID,
 				}
 				ar.Response.AuthenticatorData = tt.input.authData
 				ar.Response.ClientDataJSON = tt.input.clientData
@@ -188,9 +189,9 @@ func generateAssertionRequest(
 	assert.NoError(t, err)
 
 	assertion := map[string]any{
-		"id":    "credential-id",
+		"id":    base64.RawURLEncoding.EncodeToString([]byte("credential-id")),
 		"type":  "public-key",
-		"rawId": "credential-id",
+		"rawId": base64.RawURLEncoding.EncodeToString([]byte("credential-id")),
 		"response": map[string]string{
 			"authenticatorData": base64.RawURLEncoding.EncodeToString(authData.Bytes()),
 			"clientDataJSON":    base64.RawURLEncoding.EncodeToString(clientDataJSON),
@@ -287,6 +288,7 @@ func TestVerifyAssertion(t *testing.T) {
 				challengeStr,
 				tt.storedSignCount,
 				pubKey,
+				[]byte("credential-id"),
 			)
 
 			if tt.wantErr {

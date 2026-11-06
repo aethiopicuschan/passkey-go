@@ -434,6 +434,7 @@ func LoginWithPasskeyHandler(w http.ResponseWriter, r *http.Request) {
 		expectedChallenge,       // challenge originally issued
 		sc,                      // previous sign count
 		pk.Key,                  // public key
+		assertion.CredentialID,  // credential ID tied to the selected stored key
 	)
 	if err != nil {
 		handlePasskeyError(w, err)

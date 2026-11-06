@@ -25,11 +25,12 @@ type AssertionResponse struct {
 
 // ParsedAssertion contains all decoded fields from an assertion response.
 type ParsedAssertion struct {
-	Raw        AssertionResponse
-	AuthData   []byte
-	ClientData []byte
-	Signature  []byte
-	UserHandle []byte // may be nil
+	Raw          AssertionResponse
+	CredentialID []byte
+	AuthData     []byte
+	ClientData   []byte
+	Signature    []byte
+	UserHandle   []byte // may be nil
 }
 
 // ParseAssertion parses a JSON-formatted assertion response from a client.
@@ -51,6 +52,16 @@ func ParseAssertion(jsonBody []byte) (*ParsedAssertion, error) {
 	authData, err := base64.RawURLEncoding.DecodeString(ar.Response.AuthenticatorData)
 	if err != nil {
 		return nil, errors.Join(ErrAuthDataInvalid, err)
+	}
+
+	// Decode and cross-check the credential ID fields before the caller selects
+	// a stored credential or public key.
+	credentialID, err := base64.RawURLEncoding.DecodeString(ar.RawID)
+	if err != nil {
+		return nil, errors.Join(ErrCredentialIDMalformed, err)
+	}
+	if ar.ID != base64.RawURLEncoding.EncodeToString(credentialID) {
+		return nil, ErrCredentialIDMismatch
 	}
 
 	// Decode ClientDataJSON
@@ -78,11 +89,12 @@ func ParseAssertion(jsonBody []byte) (*ParsedAssertion, error) {
 	}
 
 	return &ParsedAssertion{
-		Raw:        ar,
-		AuthData:   authData,
-		ClientData: clientData,
-		Signature:  sig,
-		UserHandle: userHandle,
+		Raw:          ar,
+		CredentialID: credentialID,
+		AuthData:     authData,
+		ClientData:   clientData,
+		Signature:    sig,
+		UserHandle:   userHandle,
 	}, nil
 }
 
@@ -98,6 +110,7 @@ func ParseAssertion(jsonBody []byte) (*ParsedAssertion, error) {
 //     and prevents replay attacks or cross-site request forgery.
 //   - storedSignCount: The signCount previously stored for this credential, used to detect cloned authenticators.
 //   - pubKey: The public key that was originally registered with the credential.
+//   - expectedCredentialID: The raw credential ID associated with pubKey.
 //
 // Returns:
 // - newSignCount: The updated signCount to store on success.
@@ -109,11 +122,15 @@ func VerifyAssertion(
 	expectedChallenge string,
 	storedSignCount uint32,
 	pubKey *ecdsa.PublicKey,
+	expectedCredentialID []byte,
 ) (uint32, error) {
 	// Step 1: Parse assertion
 	parsed, err := ParseAssertion(jsonBody)
 	if err != nil {
 		return 0, errors.Join(ErrInvalidClientData, err)
+	}
+	if !equalBytes(parsed.CredentialID, expectedCredentialID) {
+		return 0, ErrCredentialIDMismatch
 	}
 
 	// Step 2: Parse and validate clientDataJSON
