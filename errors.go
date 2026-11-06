@@ -32,6 +32,9 @@ var (
 	ErrUnsupportedKeyType       = &PasskeyError{"E2002", "unsupported COSE key type", 400, "coseKey"}
 	ErrInvalidCOSEKey           = &PasskeyError{"E2003", "invalid COSE key format", 400, "coseKey"}
 	ErrPublicKeyParseFailed     = &PasskeyError{"E2004", "failed to parse public key", 400, "publicKey"}
+	ErrRegistrationTypeInvalid  = &PasskeyError{"E2005", "invalid registration client data type", 400, "clientDataJSON.type"}
+	ErrRegistrationDataMissing  = &PasskeyError{"E2006", "registration authenticator data missing attested credential data", 400, "authenticatorData"}
+	ErrRegistrationRPIDMismatch = &PasskeyError{"E2007", "registration RP ID hash mismatch", 400, "authenticatorData.rpIdHash"}
 )
 
 // --- Assertion Errors ---

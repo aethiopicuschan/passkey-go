@@ -30,16 +30,31 @@ You must persist this challenge per user during registration or login.
 
 ### 🏁 Registration Flow
 
-#### 1. Parse attestation object from client
+#### 1. Parse attestation object and verify the registration ceremony
 
 ```go
 att, err := passkey.ParseAttestationObject(attestationBase64)
+if err != nil {
+    // reject the response
+}
+
+// clientDataJSON is the decoded response field from navigator.credentials.create().
+verified, err := passkey.VerifyRegistration(
+    clientDataJSON,
+    att.AuthData,
+    expectedOrigin,
+    expectedRPID,
+    expectedChallenge,
+)
+if err != nil {
+    // reject the response
+}
 ```
 
-#### 2. Parse authenticator data
+#### 2. Use the verified authenticator data
 
 ```go
-authData, err := passkey.ParseAuthData(att.AuthData)
+authData := verified // ParsedAuthData returned by VerifyRegistration
 ```
 
 #### 3. Convert COSE key to ECDSA
@@ -48,11 +63,15 @@ authData, err := passkey.ParseAuthData(att.AuthData)
 pubKey, err := passkey.ConvertCOSEKeyToECDSA(authData.PublicKey)
 ```
 
-You can now persist:
+Only after `VerifyRegistration` succeeds, extract and persist:
 
 - `authData.CredID` (base64url-encoded)
 - `pubKey` (as \*ecdsa.PublicKey)
 - `authData.SignCount` (initial counter)
+
+`VerifyRegistration` checks the client data type, origin, challenge, RP ID hash,
+and presence of attested credential data. It does not verify attestation
+statement signatures or establish an attestation trust chain.
 
 ### ✅ Authentication Flow (High-level)
 
