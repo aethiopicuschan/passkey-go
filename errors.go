@@ -47,6 +47,9 @@ var (
 	ErrChallengeDecode      = &PasskeyError{"E1006", "failed to decode challenge", 400, "challenge"}
 	ErrChallengeGen         = &PasskeyError{"E1007", "failed to generate challenge", 500, ""}
 	ErrAssertionTypeInvalid = &PasskeyError{"E1008", "invalid assertion client data type", 400, "clientDataJSON.type"}
+	ErrInvalidPublicKey     = &PasskeyError{"E1009", "invalid ECDSA public key", 400, "publicKey"}
+	ErrSignatureDERInvalid  = &PasskeyError{"E1010", "invalid ASN.1 ECDSA signature", 400, "signature"}
+	ErrSignatureScalarRange = &PasskeyError{"E1011", "ECDSA signature scalar out of range", 400, "signature"}
 )
 
 // --- Storage / Credential Errors ---

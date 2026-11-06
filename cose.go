@@ -6,7 +6,6 @@ import (
 	"errors"
 	"fmt"
 	"math"
-	"math/big"
 )
 
 // ConvertCOSEKeyToECDSA converts a COSE-formatted public key (used in WebAuthn and Passkeys)
@@ -64,30 +63,20 @@ func ConvertCOSEKeyToECDSA(coseKey map[int]any) (*ecdsa.PublicKey, error) {
 		return nil, errors.Join(ErrInvalidCOSEKey, fmt.Errorf("y is not []byte: %T", yRaw))
 	}
 
-	X := new(big.Int).SetBytes(x)
-	Y := new(big.Int).SetBytes(y)
-
 	curve := elliptic.P256()
-	params := curve.Params()
-
-	// Elliptic curve equation: y² ≡ x³ + ax + b (mod p)
-	y2 := new(big.Int).Exp(Y, big.NewInt(2), params.P)
-
-	x3 := new(big.Int).Exp(X, big.NewInt(3), params.P)
-	ax := new(big.Int).Mul(X, big.NewInt(-3)) // a = -3
-	ax.Mod(ax, params.P)
-
-	rhs := new(big.Int).Add(x3, ax)
-	rhs.Add(rhs, params.B)
-	rhs.Mod(rhs, params.P)
-
-	if y2.Cmp(rhs) != 0 {
+	// COSE EC2 coordinates are fixed-width unsigned integers. Build the SEC 1
+	// uncompressed point and let crypto/ecdsa validate and parse it.
+	coordinateSize := (curve.Params().BitSize + 7) / 8
+	if len(x) != coordinateSize || len(y) != coordinateSize {
 		return nil, ErrPublicKeyParseFailed
 	}
-
-	return &ecdsa.PublicKey{
-		Curve: curve,
-		X:     X,
-		Y:     Y,
-	}, nil
+	point := make([]byte, 1+2*coordinateSize)
+	point[0] = 0x04
+	copy(point[1:1+coordinateSize], x)
+	copy(point[1+coordinateSize:], y)
+	pubKey, err := ecdsa.ParseUncompressedPublicKey(curve, point)
+	if err != nil {
+		return nil, errors.Join(ErrPublicKeyParseFailed, err)
+	}
+	return pubKey, nil
 }

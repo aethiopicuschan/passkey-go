@@ -39,6 +39,15 @@ func TestVerifyAssertionSignature(t *testing.T) {
 		R, S *big.Int
 	}{R: r, S: s})
 	assert.NoError(t, err)
+	zeroR, err := asn1.Marshal(struct{ R, S *big.Int }{R: big.NewInt(0), S: big.NewInt(1)})
+	assert.NoError(t, err)
+	zeroS, err := asn1.Marshal(struct{ R, S *big.Int }{R: big.NewInt(1), S: big.NewInt(0)})
+	assert.NoError(t, err)
+	orderR, err := asn1.Marshal(struct{ R, S *big.Int }{R: new(big.Int).Set(privKey.Params().N), S: big.NewInt(1)})
+	assert.NoError(t, err)
+	orderS, err := asn1.Marshal(struct{ R, S *big.Int }{R: big.NewInt(1), S: new(big.Int).Set(privKey.Params().N)})
+	assert.NoError(t, err)
+	trailing := append(append([]byte(nil), sig...), 0x00)
 
 	tests := []struct {
 		name      string
@@ -66,6 +75,11 @@ func TestVerifyAssertionSignature(t *testing.T) {
 			wantErr:   true,
 			wantErrIs: passkey.ErrSignatureInvalid,
 		},
+		{name: "zero R", authData: authData, client: clientDataJSON, sig: zeroR, pub: pubKey, wantErr: true, wantErrIs: passkey.ErrSignatureInvalid},
+		{name: "zero S", authData: authData, client: clientDataJSON, sig: zeroS, pub: pubKey, wantErr: true, wantErrIs: passkey.ErrSignatureInvalid},
+		{name: "R equals curve order", authData: authData, client: clientDataJSON, sig: orderR, pub: pubKey, wantErr: true, wantErrIs: passkey.ErrSignatureInvalid},
+		{name: "S equals curve order", authData: authData, client: clientDataJSON, sig: orderS, pub: pubKey, wantErr: true, wantErrIs: passkey.ErrSignatureInvalid},
+		{name: "trailing DER bytes", authData: authData, client: clientDataJSON, sig: trailing, pub: pubKey, wantErr: true, wantErrIs: passkey.ErrSignatureInvalid},
 		{
 			name:     "signature with wrong key",
 			authData: authData,
