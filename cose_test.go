@@ -2,8 +2,8 @@ package passkey_test
 
 import (
 	"crypto/ecdh"
+	"crypto/ecdsa"
 	"crypto/elliptic"
-	"math/big"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
@@ -11,16 +11,13 @@ import (
 	"github.com/aethiopicuschan/passkey-go"
 )
 
-// IsOnCurveP256 returns true if (x, y) is a valid point on the NIST P-256 curve using crypto/ecdh
-func IsOnCurveP256(x, y *big.Int) bool {
-	curve := ecdh.P256()
-
-	byteLen := (elliptic.P256().Params().BitSize + 7) >> 3
-	encoded := make([]byte, 1+2*byteLen)
-	encoded[0] = 4
-	x.FillBytes(encoded[1 : 1+byteLen])
-	y.FillBytes(encoded[1+byteLen:])
-	_, err := curve.NewPublicKey(encoded)
+// isValidP256PublicKey checks the public key through the standard ECDH parser.
+func isValidP256PublicKey(pub *ecdsa.PublicKey) bool {
+	encoded, err := pub.Bytes()
+	if err != nil {
+		return false
+	}
+	_, err = ecdh.P256().NewPublicKey(encoded)
 	return err == nil
 }
 
@@ -127,7 +124,7 @@ func TestConvertCOSEKeyToECDSA(t *testing.T) {
 			} else {
 				assert.NoError(t, err)
 				assert.NotNil(t, pub)
-				assert.True(t, IsOnCurveP256(pub.X, pub.Y))
+				assert.True(t, isValidP256PublicKey(pub))
 			}
 		})
 	}

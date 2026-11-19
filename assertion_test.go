@@ -22,6 +22,7 @@ func TestParseAssertion(t *testing.T) {
 	validAuthData := base64.RawURLEncoding.EncodeToString([]byte("auth-data"))
 	validClientData := base64.RawURLEncoding.EncodeToString([]byte("client-data"))
 	validSignature := base64.RawURLEncoding.EncodeToString([]byte("signature"))
+	validCredentialID := base64.RawURLEncoding.EncodeToString([]byte("credential-id"))
 
 	type args struct {
 		authData   string
@@ -105,9 +106,9 @@ func TestParseAssertion(t *testing.T) {
 				body = tt.rawBody
 			} else {
 				ar := passkey.AssertionResponse{
-					ID:    "test-id",
+					ID:    validCredentialID,
 					Type:  "public-key",
-					RawID: "test-raw-id",
+					RawID: validCredentialID,
 				}
 				ar.Response.AuthenticatorData = tt.input.authData
 				ar.Response.ClientDataJSON = tt.input.clientData
@@ -143,6 +144,8 @@ func generateAssertionRequest(
 	tamperSig bool,
 	tamperOrigin bool,
 	tamperChallenge bool,
+	tamperType bool,
+	authFlags byte,
 ) ([]byte, *ecdsa.PublicKey, uint32) {
 	t.Helper()
 
@@ -154,8 +157,12 @@ func generateAssertionRequest(
 	if tamperOrigin {
 		clientOrigin = "https://evil.example.com"
 	}
+	clientType := "webauthn.get"
+	if tamperType {
+		clientType = "webauthn.create"
+	}
 	clientData := map[string]string{
-		"type":      "webauthn.get",
+		"type":      clientType,
 		"challenge": base64.RawURLEncoding.EncodeToString(clientChallenge),
 		"origin":    clientOrigin,
 	}
@@ -167,7 +174,7 @@ func generateAssertionRequest(
 	rpIDHash := sha256.Sum256([]byte(rpID))
 	authData := bytes.NewBuffer(nil)
 	authData.Write(rpIDHash[:])
-	authData.WriteByte(0x01)
+	authData.WriteByte(authFlags)
 	binary.Write(authData, binary.BigEndian, signCount)
 
 	signed := append(authData.Bytes(), clientHash[:]...)
@@ -188,9 +195,9 @@ func generateAssertionRequest(
 	assert.NoError(t, err)
 
 	assertion := map[string]any{
-		"id":    "credential-id",
+		"id":    base64.RawURLEncoding.EncodeToString([]byte("credential-id")),
 		"type":  "public-key",
-		"rawId": "credential-id",
+		"rawId": base64.RawURLEncoding.EncodeToString([]byte("credential-id")),
 		"response": map[string]string{
 			"authenticatorData": base64.RawURLEncoding.EncodeToString(authData.Bytes()),
 			"clientDataJSON":    base64.RawURLEncoding.EncodeToString(clientDataJSON),
@@ -220,6 +227,9 @@ func TestVerifyAssertion(t *testing.T) {
 		tamperSig        bool
 		tamperOrigin     bool
 		tamperChallenge  bool
+		tamperType       bool
+		authFlags        byte
+		requireUV        bool
 		storedSignCount  uint32
 		authenticatorInc uint32
 		wantErr          bool
@@ -227,12 +237,14 @@ func TestVerifyAssertion(t *testing.T) {
 	}{
 		{
 			name:             "valid",
+			authFlags:        0x01,
 			storedSignCount:  4,
 			authenticatorInc: 5,
 			wantErr:          false,
 		},
 		{
 			name:             "wrong signature",
+			authFlags:        0x01,
 			tamperSig:        true,
 			storedSignCount:  4,
 			authenticatorInc: 5,
@@ -241,6 +253,7 @@ func TestVerifyAssertion(t *testing.T) {
 		},
 		{
 			name:             "wrong origin",
+			authFlags:        0x01,
 			tamperOrigin:     true,
 			storedSignCount:  4,
 			authenticatorInc: 5,
@@ -249,6 +262,7 @@ func TestVerifyAssertion(t *testing.T) {
 		},
 		{
 			name:             "wrong challenge",
+			authFlags:        0x01,
 			tamperChallenge:  true,
 			storedSignCount:  4,
 			authenticatorInc: 5,
@@ -256,7 +270,41 @@ func TestVerifyAssertion(t *testing.T) {
 			wantErrIs:        passkey.ErrChallengeMismatch,
 		},
 		{
+			name:             "wrong client data type",
+			authFlags:        0x01,
+			tamperType:       true,
+			storedSignCount:  4,
+			authenticatorInc: 5,
+			wantErr:          true,
+			wantErrIs:        passkey.ErrAssertionTypeInvalid,
+		},
+		{
+			name:             "user presence missing",
+			authFlags:        0x00,
+			storedSignCount:  4,
+			authenticatorInc: 5,
+			wantErr:          true,
+			wantErrIs:        passkey.ErrUserPresenceRequired,
+		},
+		{
+			name:             "user verification required but missing",
+			authFlags:        0x01,
+			storedSignCount:  4,
+			authenticatorInc: 5,
+			requireUV:        true,
+			wantErr:          true,
+			wantErrIs:        passkey.ErrUserVerificationRequired,
+		},
+		{
+			name:             "user verification satisfied",
+			authFlags:        0x05,
+			storedSignCount:  4,
+			authenticatorInc: 5,
+			requireUV:        true,
+		},
+		{
 			name:             "signCount replay",
+			authFlags:        0x01,
 			storedSignCount:  10,
 			authenticatorInc: 8,
 			wantErr:          true,
@@ -278,6 +326,8 @@ func TestVerifyAssertion(t *testing.T) {
 				tt.tamperSig,
 				tt.tamperOrigin,
 				tt.tamperChallenge,
+				tt.tamperType,
+				tt.authFlags,
 			)
 
 			newCount, err := passkey.VerifyAssertion(
@@ -287,6 +337,8 @@ func TestVerifyAssertion(t *testing.T) {
 				challengeStr,
 				tt.storedSignCount,
 				pubKey,
+				[]byte("credential-id"),
+				tt.requireUV,
 			)
 
 			if tt.wantErr {

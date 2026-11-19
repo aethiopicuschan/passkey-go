@@ -206,6 +206,9 @@
                     );
                     const attestationBase64url =
                         base64urlEncode(attestationArray);
+                    const clientDataJSON = base64urlEncode(
+                        new Uint8Array(attResp.clientDataJSON),
+                    );
 
                     // 6. Send it to the server for registration
                     const res = await fetch("/passkey/register", {
@@ -213,6 +216,8 @@
                         headers: { "Content-Type": "application/json" },
                         body: JSON.stringify({
                             attestation: attestationBase64url,
+                            clientDataJSON,
+                            key,
                         }),
                     });
 

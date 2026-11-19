@@ -5,7 +5,6 @@ import (
 	"crypto/sha256"
 	"encoding/asn1"
 	"errors"
-	"fmt"
 	"math/big"
 )
 
@@ -29,8 +28,16 @@ type ecdsaSignature struct {
 // - nil if the signature is valid.
 // - ErrSignatureInvalid if the signature is malformed or does not verify.
 func VerifyAssertionSignature(authData, clientDataJSON, signature []byte, pubKey *ecdsa.PublicKey) error {
-	if pubKey == nil || pubKey.X == nil || pubKey.Y == nil || pubKey.Params() == nil {
-		return errors.New("invalid public key")
+	if pubKey == nil || pubKey.Curve == nil {
+		return errors.Join(ErrSignatureInvalid, ErrInvalidPublicKey)
+	}
+	encodedPublicKey, err := pubKey.Bytes()
+	if err != nil {
+		return errors.Join(ErrSignatureInvalid, ErrInvalidPublicKey)
+	}
+	validatedPublicKey, err := ecdsa.ParseUncompressedPublicKey(pubKey.Curve, encodedPublicKey)
+	if err != nil {
+		return errors.Join(ErrSignatureInvalid, ErrInvalidPublicKey)
 	}
 
 	// Step 1: Hash the clientDataJSON with SHA-256
@@ -43,15 +50,25 @@ func VerifyAssertionSignature(authData, clientDataJSON, signature []byte, pubKey
 	// Step 3: Parse the ASN.1 DER encoded ECDSA signature into R and S
 	var sig ecdsaSignature
 	rest, err := asn1.Unmarshal(signature, &sig)
-	if err != nil || len(rest) > 0 {
-		return errors.Join(ErrSignatureInvalid, fmt.Errorf("asn1 unmarshal failed or trailing bytes: %w", err))
+	if err != nil {
+		return errors.Join(ErrSignatureInvalid, ErrSignatureDERInvalid, err)
+	}
+	if len(rest) > 0 {
+		return errors.Join(ErrSignatureInvalid, ErrSignatureDERInvalid)
+	}
+
+	// Reject invalid ECDSA scalars before low-S normalization. In particular,
+	// ToLowS must not receive nil or out-of-range values from untrusted DER.
+	n := validatedPublicKey.Curve.Params().N
+	if sig.R == nil || sig.S == nil || sig.R.Sign() <= 0 || sig.S.Sign() <= 0 || sig.R.Cmp(n) >= 0 || sig.S.Cmp(n) >= 0 {
+		return errors.Join(ErrSignatureInvalid, ErrSignatureScalarRange)
 	}
 
 	// Step 4: Normalize S to a low-S value to prevent malleability issues
-	sig.S = ToLowS(sig.S, pubKey.Params().N)
+	sig.S = ToLowS(sig.S, n)
 
 	// Step 5: Verify the ECDSA signature using the public key and the hashed message
-	if !ecdsa.Verify(pubKey, signedHash[:], sig.R, sig.S) {
+	if !ecdsa.Verify(validatedPublicKey, signedHash[:], sig.R, sig.S) {
 		return ErrSignatureInvalid
 	}
 
