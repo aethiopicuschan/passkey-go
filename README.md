@@ -70,8 +70,9 @@ Only after `VerifyRegistration` succeeds, extract and persist:
 - `authData.SignCount` (initial counter)
 
 `VerifyRegistration` checks the client data type, origin, challenge, RP ID hash,
-and presence of attested credential data. It does not verify attestation
-statement signatures or establish an attestation trust chain.
+the user presence (UP) flag, and presence of attested credential data. It does
+not verify attestation statement signatures or establish an attestation trust
+chain.
 
 ### ✅ Authentication Flow (High-level)
 

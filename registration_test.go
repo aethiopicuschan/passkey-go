@@ -19,17 +19,13 @@ func TestVerifyRegistration(t *testing.T) {
 		require.NoError(t, err)
 		return data
 	}
-	makeAuthData := func(id []byte, rp string, attested bool) []byte {
+	makeAuthData := func(id []byte, rp string, flags byte) []byte {
 		h := sha256.Sum256([]byte(rp))
 		var b bytes.Buffer
 		b.Write(h[:])
-		if attested {
-			b.WriteByte(0x40)
-		} else {
-			b.WriteByte(0)
-		}
+		b.WriteByte(flags)
 		_ = binary.Write(&b, binary.BigEndian, uint32(0))
-		if attested {
+		if flags&0x40 != 0 {
 			b.Write(make([]byte, 16))
 			_ = binary.Write(&b, binary.BigEndian, uint16(len(id)))
 			b.Write(id)
@@ -43,20 +39,21 @@ func TestVerifyRegistration(t *testing.T) {
 	tests := []struct {
 		name             string
 		typ, ch, org, rp string
-		attested         bool
+		flags            byte
 		want             error
 	}{
-		{name: "valid", typ: "webauthn.create", ch: challenge, org: origin, rp: rpID, attested: true},
-		{name: "wrong type", typ: "webauthn.get", ch: challenge, org: origin, rp: rpID, attested: true, want: passkey.ErrRegistrationTypeInvalid},
-		{name: "wrong challenge", typ: "webauthn.create", ch: "b3RoZXI", org: origin, rp: rpID, attested: true, want: passkey.ErrChallengeMismatch},
-		{name: "wrong origin", typ: "webauthn.create", ch: challenge, org: "https://evil.example", rp: rpID, attested: true, want: passkey.ErrInvalidClientData},
-		{name: "wrong rp id", typ: "webauthn.create", ch: challenge, org: origin, rp: "evil.example", attested: true, want: passkey.ErrRegistrationRPIDMismatch},
-		{name: "missing attested data", typ: "webauthn.create", ch: challenge, org: origin, rp: rpID, want: passkey.ErrRegistrationDataMissing},
+		{name: "valid", typ: "webauthn.create", ch: challenge, org: origin, rp: rpID, flags: 0x41},
+		{name: "missing user presence", typ: "webauthn.create", ch: challenge, org: origin, rp: rpID, flags: 0x40, want: passkey.ErrUserPresenceRequired},
+		{name: "wrong type", typ: "webauthn.get", ch: challenge, org: origin, rp: rpID, flags: 0x41, want: passkey.ErrRegistrationTypeInvalid},
+		{name: "wrong challenge", typ: "webauthn.create", ch: "b3RoZXI", org: origin, rp: rpID, flags: 0x41, want: passkey.ErrChallengeMismatch},
+		{name: "wrong origin", typ: "webauthn.create", ch: challenge, org: "https://evil.example", rp: rpID, flags: 0x41, want: passkey.ErrInvalidClientData},
+		{name: "wrong rp id", typ: "webauthn.create", ch: challenge, org: origin, rp: "evil.example", flags: 0x41, want: passkey.ErrRegistrationRPIDMismatch},
+		{name: "missing attested data", typ: "webauthn.create", ch: challenge, org: origin, rp: rpID, flags: 0, want: passkey.ErrRegistrationDataMissing},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			client := makeClientData(tt.typ, tt.ch, tt.org)
-			got, err := passkey.VerifyRegistration(client, makeAuthData([]byte("credential-id"), tt.rp, tt.attested), origin, rpID, challenge)
+			got, err := passkey.VerifyRegistration(client, makeAuthData([]byte("credential-id"), tt.rp, tt.flags), origin, rpID, challenge)
 			if tt.want != nil {
 				require.ErrorIs(t, err, tt.want)
 				require.Nil(t, got)

@@ -28,6 +28,10 @@ func VerifyRegistration(clientDataJSON, authData []byte, expectedOrigin, expecte
 	if parsed.Flags&0x40 == 0 || len(parsed.CredID) == 0 || parsed.PublicKey == nil {
 		return nil, ErrRegistrationDataMissing
 	}
+	const flagUserPresent = 1 << 0
+	if parsed.Flags&flagUserPresent == 0 {
+		return nil, ErrUserPresenceRequired
+	}
 	expectedHash := sha256.Sum256([]byte(expectedRPID))
 	if !equalBytes(parsed.RPIDHash, expectedHash[:]) {
 		return nil, ErrRegistrationRPIDMismatch
